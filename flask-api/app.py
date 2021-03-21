@@ -734,7 +734,7 @@ class CategoryListByIndustry(Resource):
         }
     })
     def get(self):
-        def get_categories_by_industry(tx):
+        def get_categories_by_industry(tx, industry_uid):
             return list(tx.run('MATCH (category:Category)--(i:Industry {uid:$industry_uid}) RETURN category',
                                {'industry_uid': industry_uid}))
 
@@ -1224,10 +1224,10 @@ class CompatioScoreByProduct(Resource):
                 '''
                 MATCH (b:Category)--(p:Product {uid:$root_uid})-[scr:COMPATIO]-(prod:Product)--(c:Category)<-[r:RELEVANT_CATEGORY]-(b)
                 WHERE scr.active = True
-                WITH DISTINCT c,r,{merchantProductId:prod.uid, compatioScore:scr.score} as prods
-                ORDER BY 1-prods.compatioScore
-                WITH DISTINCT {categoryName:c.name, categoryID:c.uid, categoryImageUrl:c.image_url, relevanceRank:r.rank, products:collect(prods)} as compat 
-                ORDER BY compat.relevanceRank
+                WITH DISTINCT c,r,{merchantProductId:prod.uid, compatio_score:scr.score} as prods
+                ORDER BY 1-prods.compatio_score
+                WITH DISTINCT {category:properties(c), relevance_rank:r.rank, products:collect(prods)} as compat 
+                ORDER BY compat.relevance_rank
                 RETURN collect(compat) as compatibleCategories
                 ''', {'root_uid': root_uid}
                 #     [..$products_per_category],  [..$maximum_categories]
@@ -1242,10 +1242,10 @@ class CompatioScoreByProduct(Resource):
                 WHERE scr.score > 0 and scr.active = True
                 WITH DISTINCT root,scr,prod,c,r,b,p
                 MATCH (prod)--(cs:Sku)--(p)
-                WITH DISTINCT root,c,r,{variant_id:cs.sku, parent_id:cs.commerce_product_id, compatioScore:scr.score} as prods
-                ORDER BY 1-prods.compatioScore
+                WITH DISTINCT root,c,r,{variant_id:cs.sku, parent_id:cs.commerce_product_id, compatio_score:scr.score} as prods
+                ORDER BY 1-prods.compatio_score
                 WITH DISTINCT root,{category:properties(c), relevance_rank:r.rank, products:collect(prods)} as compat 
-                ORDER BY compat.relevanceRank
+                ORDER BY compat.relevance_rank
                 RETURN root.uid as root_uid, collect(compat) as compatibleCategories
                 ''', {'merchant_key': merchant_key, 'variant_id': variant_id}
                 #     [..$products_per_category],  [..$maximum_categories]
