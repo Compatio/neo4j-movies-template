@@ -60,6 +60,7 @@ def env(key, default=None, required=True):
 DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
 DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
 DATABASE_URL = env('PROD_MASTER_URL')
+# GAIA_KEY = env('XRS_API_KEY')
 
 # # gms
 # DATABASE_USERNAME = env('DEV_GRAPH_USERNAME')
@@ -732,12 +733,14 @@ class CategoryListByIndustry(Resource):
             }
         }
     })
-    def get(self, industry_uid):
-        def get_categories_by_industry(tx, industry_uid):
+    def get(self):
+        def get_categories_by_industry(tx):
             return list(tx.run('MATCH (category:Category)--(i:Industry {uid:$industry_uid}) RETURN category',
                                {'industry_uid': industry_uid}))
 
         db = get_db()
+        # print(request.args.get('industry_uid'))
+        industry_uid = request.args.get('industry_uid')
         result = db.write_transaction(get_categories_by_industry, industry_uid)
         return [serialize_category(record['category']) for record in result]
 
@@ -774,9 +777,9 @@ class AnalyticsEventByDateRange(Resource):
             }
         }
     })
-    def get(self, start, end):
+    def get(self):
         try:
-            params = {'start': start, 'end': end}
+            params = {'start': request.args.get('start'), 'end': request.args.get('end')}
         except ValueError:
             return {'description': 'invalid year format'}, 400
 
@@ -793,6 +796,7 @@ class AnalyticsEventByDateRange(Resource):
                 ''', params
             ))
 
+        # print(request.headers)
         db = get_db()
         result = db.read_transaction(get_event_list_by_date_range, params)
         return [serialize_event(record['event'], record['payload']) for record in result]
@@ -893,22 +897,27 @@ class DynamicConfigurator(Resource):
             '200': {
                 'description': 'SmartBuilder input and results, includes product attributes if no merchant_key',
                 'schema': SmartBuilderModel,
-            }
+            },
+            '401': {
+                'description': 'invalid / missing authentication',
+            },
         }
     })
-    def get(self, product_selections, model_id, merchant_key, variant_id):
+    def get(self):
         context = {
-            'product_selections': product_selections,
-            'model_id': model_id,
-            'merchant_key': merchant_key,
-            'variant_id': variant_id.split(',')
+            'product_selections': request.args.get('product_selections'),
+            'model_id': request.args.get('model_id'),
+            'merchant_key': request.args.get('merchant_key'),
+            'variant_id': request.args.get('variant_id')
         }
+        if context['variant_id'] is not None:
+            context['variant_id'] = context['variant_id'].split(',')
 
         def smart_builder(tx, context):
             # if product selections isn't empty
-            if context['product_selections'] != '{product_selections}':
-                context['product_selections'] = json.loads(product_selections)
-            elif context['merchant_key'] != '{merchant_key}' and context['variant_id'] != '{variant_id}':
+            if context['product_selections'] is not None:
+                context['product_selections'] = json.loads(context['product_selections'])
+            elif context['merchant_key'] is not None and context['variant_id'] is not None:
                 # empty dict
                 context['product_selections'] = {}
                 # for each categorized product
@@ -924,7 +933,7 @@ class DynamicConfigurator(Resource):
             #         context['product_selections'][record['category']] = record['product']
             # context['product_selections'] = dict(zzz)
             # if no model id
-            if context['model_id'] == '""' or context['model_id'] == '{model_id}':
+            if context['model_id'] is None:
                 # run dynamic compatio
                 return [serialize_smart_builder(context,
                                                 score_products(tx, dynamic_compatio_products(tx, context), context),
@@ -954,7 +963,7 @@ class DynamicConfigurator(Resource):
                                  for k in context['product_selections'].keys()]
                      } for cat in ans.keys()]
             }
-            if context.get('merchant_key') == '{merchant_key}':
+            if context.get('merchant_key') is None:
                 results = list(tx.run(
                     '''
                     UNWIND $data as cat
@@ -967,7 +976,7 @@ class DynamicConfigurator(Resource):
                     WITH DISTINCT cat,q,c,p
                     OPTIONAL MATCH (p)--(v:AttributeValue)-[va]-(a:Attribute{abs_enabled:True})
                     WHERE va.abs_show=True
-                    WITH DISTINCT cat,p,c,q,  {attr:a.name, values:collect(v.value)} as attr
+                    WITH DISTINCT cat,p,c,q, {attr:a.name, values:collect(v.value)} as attr
                     WITH cat, {product:p.uid,score:avg(c.score),attrs:collect(distinct attr),edges:collect(distinct{rule:c.rule,score:c.score})} as prds
                     ORDER BY 1-prds.score
                     RETURN cat.cat as category, collect(prds)[..3200] as prods
@@ -1176,13 +1185,28 @@ class CompatioScoreByProduct(Resource):
             }
         }
     })
-    def get(self, root_uid, variant_id, merchant_key, live_score):
+    def get(self):
+        root_uid = request.args.get('root_uid')
+        live_score = request.args.get('live_score')
+        merchant_key = request.args.get('merchant_key')
+        variant_id = request.args.get('variant_id')
+
+        def catalog_map_input(tx, variant_id, merchant_key):
+            result = list(tx.run(
+                '''
+                MATCH (y:Party {key:$merchant_key})--(s:Sku{sku:$variant_id})--(p:Product)
+                RETURN DISTINCT p.uid as product
+                ''', {'variant_id': variant_id, 'merchant_key': merchant_key}
+            ))
+            return [record['product'] for record in result]
+
+
         def compatio_score(tx, root_uid):
             return list(tx.run(
                 '''
                 MATCH (root:Product{uid:$root_uid})-[scr:COMPATIO]->(prod:Product)--(c:Category)
                 WITH root,prod,scr,c
-                MATCH (prod)--(w:AttributeValue)<-[s:SCORE]-(v:AttributeValue)--(root)
+                MATCH (prod)--(w:AttributeValue)-[s:SCORE]-(v:AttributeValue)--(root)
                 WITH root,prod,s,c
                 WITH root,c,prod,
                     abs(root.normalized_min_ad_price-prod.normalized_min_ad_price) as price_diff,
@@ -1227,10 +1251,14 @@ class CompatioScoreByProduct(Resource):
                 #     [..$products_per_category],  [..$maximum_categories]
             ))
 
+        print(request.args)
         db = get_db()
         if live_score == 'True' or live_score == 'true' or live_score is True:
+            if root_uid is None and merchant_key is not None and variant_id is not None:
+                root_uid = db.write_transaction(catalog_map_input, variant_id, merchant_key)[0]
+                print(root_uid)
             result = db.write_transaction(compatio_score, root_uid)
-        elif merchant_key != '{merchant_key}' and variant_id != '{variant_id}':
+        elif merchant_key is not None and variant_id is not None:
             result = db.write_transaction(xrs_mapped, variant_id, merchant_key)
         else:
             result = db.write_transaction(xrs_native, root_uid)
@@ -2188,9 +2216,7 @@ api.add_resource(PersonBacon, '/api/v0/people/bacon')
 api.add_resource(Register, '/api/v0/register')
 api.add_resource(Login, '/api/v0/login')
 api.add_resource(UserMe, '/api/v0/users/me')
-api.add_resource(CategoryListByIndustry, '/api/gaia/categories/<string:industry_uid>')
-api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/<string:start>/<string:end>')
-api.add_resource(DynamicConfigurator,
-                 '/api/gaia/xdc/<string:product_selections>/<string:model_id>/<string:merchant_key>/<string:variant_id>')
-api.add_resource(CompatioScoreByProduct,
-                 '/api/gaia/score/<string:root_uid>/<string:variant_id>/<string:merchant_key>/<string:live_score>')
+api.add_resource(CategoryListByIndustry, '/api/gaia/categories/')
+api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/')
+api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
+api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
