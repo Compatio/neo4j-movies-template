@@ -802,11 +802,62 @@ class AnalyticsEventByDateRange(Resource):
         return [serialize_event(record['event'], record['payload']) for record in result]
 
 
-class AnalyticsCompatioSales(Resource):
+class AnalyticsMerchantTotalSales(Resource):
+    @swagger.doc({
+        'tags': ['categories'],
+        'summary': 'Find all categories for an industry',
+        'description': 'Returns all categories for an industry',
+        'parameters': [
+            {
+                'name': 'merchant_key',
+                'description': 'api key for merchant',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+        ],
+        'responses': {
+            '200': {
+                'description': 'A list of categories for an industry',
+                'schema': CategoryModel,
+            }
+        }
+    })
+    def get(self):
+        merchant_key = request.args.get('merchant_key')
+
+        def get_merchant_sales_total(tx, merchant_key):
+            return list(tx.run(
+                '''
+                MATCH p=(y:Party)-->(e:Event)-[r:SKU_FOR_EVENT]->() 
+                WHERE y.key = $merchant_key
+                WITH {timestamp:e.timestamp,items:collect(properties(r)), partial_sum:sum(toFloat(r.price)*toFloat(r.quantity))} as event 
+                RETURN collect(event) as events, sum(event.partial_sum) as total
+                ''', {'merchant_key': merchant_key}
+            ))
+
+        # print(request.headers)
+
+        db = get_db()
+        result = db.read_transaction(get_merchant_sales_total, merchant_key)
+        return [{'events': record['events'], 'total': record['total']} for record in result]
+
+
+
+class AnalyticsMerchantCompatioSales(Resource):
     @swagger.doc({
         'tags': ['events'],
         'summary': 'Find analytics events by timestamp range',
         'description': 'Returns a list of analytics events which occurred between a range of timestamp inputs',
+        'parameters': [
+            {
+                'name': 'merchant_key',
+                'description': 'api key for merchant',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+        ],
         'responses': {
             '200': {
                 'description': 'A list of analytics events occurring between the specified timestamps',
@@ -818,19 +869,21 @@ class AnalyticsCompatioSales(Resource):
         }
     })
     def get(self):
-        def get_compatio_sales_total(tx):
+        merchant_key = request.args.get('merchant_key')
+
+        def get_compatio_sales_total(tx, merchant_key):
             return list(tx.run(
                 '''
-                MATCH p=(e:Event)-[r:SKU_FOR_EVENT]->() 
+                MATCH p=(y:Party {key:$merchant_key})-->(e:Event)-[r:SKU_FOR_EVENT]->() 
                 WHERE r.is_xrs_recommended or r.item_source in ['XCS','XRS','Bundler'] 
                 WITH {timestamp:e.timestamp,items:collect(properties(r)), partial_sum:sum(toFloat(r.price)*toFloat(r.quantity))} as event 
                 RETURN collect(event) as events, sum(event.partial_sum) as total
-                '''
+                ''', {'merchant_key':merchant_key}
             ))
 
         # print(request.headers)
         db = get_db()
-        result = db.read_transaction(get_compatio_sales_total)
+        result = db.read_transaction(get_compatio_sales_total, merchant_key)
         return [{'events':record['events'],'total':record['total']} for record in result]
 
 
@@ -2250,6 +2303,7 @@ api.add_resource(Login, '/api/v0/login')
 api.add_resource(UserMe, '/api/v0/users/me')
 api.add_resource(CategoryListByIndustry, '/api/gaia/categories/')
 api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/')
-api.add_resource(AnalyticsCompatioSales, '/api/gaia/analytics/compatio_total/')
+api.add_resource(AnalyticsMerchantCompatioSales, '/api/gaia/analytics/merchant_compatio_sales/')
+api.add_resource(AnalyticsMerchantTotalSales, '/api/gaia/analytics/merchant_total_sales/')
 api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
 api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
