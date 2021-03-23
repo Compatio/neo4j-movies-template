@@ -802,6 +802,38 @@ class AnalyticsEventByDateRange(Resource):
         return [serialize_event(record['event'], record['payload']) for record in result]
 
 
+class AnalyticsCompatioSales(Resource):
+    @swagger.doc({
+        'tags': ['events'],
+        'summary': 'Find analytics events by timestamp range',
+        'description': 'Returns a list of analytics events which occurred between a range of timestamp inputs',
+        'responses': {
+            '200': {
+                'description': 'A list of analytics events occurring between the specified timestamps',
+                'schema': {
+                    'type': 'array',
+                    'items': AnalyticsEventModel,
+                }
+            }
+        }
+    })
+    def get(self):
+        def get_compatio_sales_total(tx):
+            return list(tx.run(
+                '''
+                MATCH p=(e:Event)-[r:SKU_FOR_EVENT]->() 
+                WHERE r.is_xrs_recommended or r.item_source in ['XCS','XRS','Bundler'] 
+                WITH {timestamp:e.timestamp,items:collect(properties(r)), partial_sum:sum(toFloat(r.price)*toFloat(r.quantity))} as event 
+                RETURN collect(event) as events, sum(event.partial_sum) as total
+                '''
+            ))
+
+        # print(request.headers)
+        db = get_db()
+        result = db.read_transaction(get_compatio_sales_total)
+        return [{'events':record['events'],'total':record['total']} for record in result]
+
+
 # catalog mapping
 class SkuMappingForProductList(Resource):
     @swagger.doc({
@@ -2218,5 +2250,6 @@ api.add_resource(Login, '/api/v0/login')
 api.add_resource(UserMe, '/api/v0/users/me')
 api.add_resource(CategoryListByIndustry, '/api/gaia/categories/')
 api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/')
+api.add_resource(AnalyticsCompatioSales, '/api/gaia/analytics/compatio_total/')
 api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
 api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
