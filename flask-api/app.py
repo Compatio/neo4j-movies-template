@@ -815,6 +815,13 @@ class AnalyticsMerchantTotalSales(Resource):
                 'type': 'string',
                 'required': 'true'
             },
+            {
+                'name': 'mode',
+                'description': 'choices: total, thirty, sixty',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
         ],
         'responses': {
             '200': {
@@ -836,12 +843,49 @@ class AnalyticsMerchantTotalSales(Resource):
                 ''', {'merchant_key': merchant_key}
             ))
 
+        def get_merchant_sales_thirty(tx, merchant_key):
+            return list(tx.run(
+                '''
+                MATCH (p:Party)-->(e:Event)-[x]-(s:Sku)
+                WHERE p.key = $merchant_key
+                WITH e, sum(toFloat(x.price)*toFloat(x.quantity)) as event_sum, Date(e.date)-duration({days:30}) as thirty_days_prior
+                MATCH (v:Event)-[y]-(k:Sku)
+                WHERE thirty_days_prior <= Date(v.date) <= Date(e.date)
+                RETURN e.timestamp as timestamp, event_sum as event_sum, count(distinct v) as thirty_day_count, sum(toFloat(y.price)*toFloat(y.quantity)) as thirty_day_sales
+                ORDER BY timestamp
+                ''', {'merchant_key': merchant_key}
+            ))
+        def get_merchant_sales_sixty(tx, merchant_key):
+            return list(tx.run(
+                '''
+                MATCH (p:Party)-->(e:Event)-[x]-(s:Sku)
+                WHERE p.key = $merchant_key
+                WITH e, sum(toFloat(x.price)*toFloat(x.quantity)) as event_sum, Date(e.date)-duration({days:60}) as sixty_days_prior
+                MATCH (v:Event)-[y]-(k:Sku)
+                WHERE sixty_days_prior <= Date(v.date) <= Date(e.date)
+                RETURN e.timestamp as timestamp, event_sum as event_sum, count(distinct v) as sixty_day_count, sum(toFloat(y.price)*toFloat(y.quantity)) as sixty_day_sales
+                ORDER BY timestamp
+                ''', {'merchant_key': merchant_key}
+            ))
+
         # print(request.headers)
 
         db = get_db()
-        result = db.read_transaction(get_merchant_sales_total, merchant_key)
-        return [{'events': record['events'], 'total': record['total']} for record in result]
+        mode = request.args.get('mode')
+        if mode == 'total':
+            result = db.read_transaction(get_merchant_sales_total, merchant_key)
+            return [{'events': record['events'], 'total': record['total']} for record in result]
+        elif mode == 'thirty':
+            result = db.read_transaction(get_merchant_sales_thirty, merchant_key)
+            return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
+                     'thirty_day_count': record['thirty_day_count'], 'thirty_day_sales': record['thirty_day_sales']} for record in result]
 
+        elif mode == 'sixty':
+            result = db.read_transaction(get_merchant_sales_sixty, merchant_key)
+            return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
+                     'sixty_day_count': record['sixty_day_count'], 'sixty_day_sales': record['sixty_day_sales']} for record in result]
+        else:
+            return "Please choose a different mode", 401
 
 
 class AnalyticsMerchantCompatioSales(Resource):
@@ -871,7 +915,7 @@ class AnalyticsMerchantCompatioSales(Resource):
     def get(self):
         merchant_key = request.args.get('merchant_key')
 
-        def get_compatio_sales_total(tx, merchant_key):
+        def get_merchant_compatio_sales(tx, merchant_key):
             return list(tx.run(
                 '''
                 MATCH p=(y:Party {key:$merchant_key})-->(e:Event)-[r:SKU_FOR_EVENT]->() 
@@ -883,7 +927,7 @@ class AnalyticsMerchantCompatioSales(Resource):
 
         # print(request.headers)
         db = get_db()
-        result = db.read_transaction(get_compatio_sales_total, merchant_key)
+        result = db.read_transaction(get_merchant_compatio_sales, merchant_key)
         return [{'events':record['events'],'total':record['total']} for record in result]
 
 
