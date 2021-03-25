@@ -60,7 +60,7 @@ def env(key, default=None, required=True):
 DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
 DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
 DATABASE_URL = env('PROD_MASTER_URL')
-# GAIA_KEY = env('XRS_API_KEY')
+GAIA_KEY = env('XRS_API_KEY')
 
 # # gms
 # DATABASE_USERNAME = env('DEV_GRAPH_USERNAME')
@@ -738,6 +738,13 @@ class CategoryListByIndustry(Resource):
                 'type': 'string',
                 'required': 'true'
             },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
         ],
         'responses': {
             '200': {
@@ -751,11 +758,14 @@ class CategoryListByIndustry(Resource):
             return list(tx.run('MATCH (category:Category)--(i:Industry {uid:$industry_uid}) RETURN category',
                                {'industry_uid': industry_uid}))
 
-        db = get_db()
-        # print(request.args.get('industry_uid'))
-        industry_uid = request.args.get('industry_uid')
-        result = db.write_transaction(get_categories_by_industry, industry_uid)
-        return [serialize_category(record['category']) for record in result]
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            # print(request.args.get('industry_uid'))
+            industry_uid = request.args.get('industry_uid')
+            result = db.write_transaction(get_categories_by_industry, industry_uid)
+            return [serialize_category(record['category']) for record in result]
+        else:
+            return "invalid headers", 400
 
 
 # Not sure this is useful anymore; was to me ! :D
@@ -783,6 +793,13 @@ class AnalyticsEventByDateRange(Resource):
                 'name': 'end',
                 'description': 'end timestamp',
                 'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
                 'type': 'string',
                 'required': 'true'
             }
@@ -818,10 +835,13 @@ class AnalyticsEventByDateRange(Resource):
                 ''', params
             ))
 
-        # print(request.headers)
-        db = get_db()
-        result = db.read_transaction(get_event_list_by_date_range, params)
-        return [serialize_event(record['event'], record['payload']) for record in result]
+        # print(request.headers.get('gaia-key'))
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            result = db.read_transaction(get_event_list_by_date_range, params)
+            return [serialize_event(record['event'], record['payload']) for record in result]
+        else:
+            return "invalid headers", 400
 
 
 class AnalyticsMerchantTotalSales(Resource):
@@ -844,6 +864,13 @@ class AnalyticsMerchantTotalSales(Resource):
                 'type': 'string',
                 'required': 'true'
             },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
         ],
         'responses': {
             '200': {
@@ -891,23 +918,26 @@ class AnalyticsMerchantTotalSales(Resource):
             ))
 
         # print(request.headers)
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            mode = request.args.get('mode')
+            if mode == 'total':
+                result = db.read_transaction(get_merchant_sales_total, merchant_key)
+                return [{'events': record['events'], 'total': record['total']} for record in result]
+            elif mode == 'thirty':
+                result = db.read_transaction(get_merchant_sales_thirty, merchant_key)
+                return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
+                         'thirty_day_count': record['thirty_day_count'], 'thirty_day_sales': record['thirty_day_sales']} for record in result]
 
-        db = get_db()
-        mode = request.args.get('mode')
-        if mode == 'total':
-            result = db.read_transaction(get_merchant_sales_total, merchant_key)
-            return [{'events': record['events'], 'total': record['total']} for record in result]
-        elif mode == 'thirty':
-            result = db.read_transaction(get_merchant_sales_thirty, merchant_key)
-            return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
-                     'thirty_day_count': record['thirty_day_count'], 'thirty_day_sales': record['thirty_day_sales']} for record in result]
-
-        elif mode == 'sixty':
-            result = db.read_transaction(get_merchant_sales_sixty, merchant_key)
-            return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
-                     'sixty_day_count': record['sixty_day_count'], 'sixty_day_sales': record['sixty_day_sales']} for record in result]
+            elif mode == 'sixty':
+                result = db.read_transaction(get_merchant_sales_sixty, merchant_key)
+                return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
+                         'sixty_day_count': record['sixty_day_count'], 'sixty_day_sales': record['sixty_day_sales']} for record in result]
+            else:
+                return "Please choose a different mode", 401
         else:
-            return "Please choose a different mode", 401
+            return "invalid headers", 400
+
 
 
 class AnalyticsMerchantCompatioSales(Resource):
@@ -923,6 +953,13 @@ class AnalyticsMerchantCompatioSales(Resource):
                 'type': 'string',
                 'required': 'true'
             },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
         ],
         'responses': {
             '200': {
@@ -948,9 +985,12 @@ class AnalyticsMerchantCompatioSales(Resource):
             ))
 
         # print(request.headers)
-        db = get_db()
-        result = db.read_transaction(get_merchant_compatio_sales, merchant_key)
-        return [{'events':record['events'],'total':record['total']} for record in result]
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            result = db.read_transaction(get_merchant_compatio_sales, merchant_key)
+            return [{'events':record['events'],'total':record['total']} for record in result]
+        else:
+            return "invalid headers", 400
 
 
 # catalog mapping
@@ -971,6 +1011,13 @@ class SkuMappingForProductList(Resource):
                 'name': 'end',
                 'description': 'end timestamp',
                 'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
                 'type': 'string',
                 'required': 'true'
             }
@@ -1004,9 +1051,12 @@ class SkuMappingForProductList(Resource):
                 ''', params
             ))
 
-        db = get_db()
-        result = db.read_transaction(get_event_list_by_date_range, params)
-        return [serialize_event(record['event'], record['payload']) for record in result]
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            result = db.read_transaction(get_event_list_by_date_range, params)
+            return [serialize_event(record['event'], record['payload']) for record in result]
+        else:
+            return "invalid headers", 400
 
 
 class DynamicConfigurator(Resource):
@@ -1043,6 +1093,13 @@ class DynamicConfigurator(Resource):
                 },
                 'required': False
             },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
         ],
         'responses': {
             '200': {
@@ -1281,11 +1338,14 @@ class DynamicConfigurator(Resource):
                 del data['failures']
             return data
 
-        db = get_db()
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
 
-        result = db.write_transaction(smart_builder, context)
-        # return result
-        return [record for record in result]
+            result = db.write_transaction(smart_builder, context)
+            # return result
+            return [record for record in result]
+        else:
+            return "invalid headers", 400
 
 
 class ValidateBuild(Resource):
@@ -1322,6 +1382,13 @@ class ValidateBuild(Resource):
                 },
                 'required': False
             },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
         ],
         'responses': {
             '200': {
@@ -1430,11 +1497,14 @@ class ValidateBuild(Resource):
                 del data['failures']
             return data
 
-        db = get_db()
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
 
-        result = db.write_transaction(smart_validate, context)
-        # return result
-        return [record for record in result]
+            result = db.write_transaction(smart_validate, context)
+            # return result
+            return [record for record in result]
+        else:
+            return "invalid headers", 400
 
 
 class CompatioScoreForCategoryPair(Resource):
@@ -1456,6 +1526,13 @@ class CompatioScoreForCategoryPair(Resource):
                 'in': 'path',
                 'type': 'string',
                 'required': True
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
             }
         ],
         'responses': {
@@ -1485,10 +1562,13 @@ class CompatioScoreForCategoryPair(Resource):
 
 
         # print(request.args)
-        db = get_db()
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
 
-        result = db.write_transaction(calculate_compatio_score, categories)
-        return [dict(record) for record in result]
+            result = db.write_transaction(calculate_compatio_score, categories)
+            return [dict(record) for record in result]
+        else:
+            return "invalid headers", 400
 
 
 
@@ -1524,6 +1604,13 @@ class CompatioScoreByProduct(Resource):
                 'description': 'true for live calculation (uid only), false for xrs',
                 'in': 'path',
                 'type': 'boolean',
+                'required': 'true'
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
                 'required': 'true'
             }
         ],
@@ -1600,18 +1687,21 @@ class CompatioScoreByProduct(Resource):
                 #     [..$products_per_category],  [..$maximum_categories]
             ))
 
-        print(request.args)
-        db = get_db()
-        if live_score == 'True' or live_score == 'true' or live_score is True:
-            if root_uid is None and merchant_key is not None and variant_id is not None:
-                root_uid = db.write_transaction(catalog_map_input, variant_id, merchant_key)[0]
-                print(root_uid)
-            result = db.write_transaction(compatio_score, root_uid)
-        elif merchant_key is not None and variant_id is not None:
-            result = db.write_transaction(xrs_mapped, variant_id, merchant_key)
+        # print(request.args)
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            if live_score == 'True' or live_score == 'true' or live_score is True:
+                if root_uid is None and merchant_key is not None and variant_id is not None:
+                    root_uid = db.write_transaction(catalog_map_input, variant_id, merchant_key)[0]
+                    print(root_uid)
+                result = db.write_transaction(compatio_score, root_uid)
+            elif merchant_key is not None and variant_id is not None:
+                result = db.write_transaction(xrs_mapped, variant_id, merchant_key)
+            else:
+                result = db.write_transaction(xrs_native, root_uid)
+            return [dict(record) for record in result]
         else:
-            result = db.write_transaction(xrs_native, root_uid)
-        return [dict(record) for record in result]
+            return "invalid headers", 400
 
 
 #####
@@ -1647,9 +1737,12 @@ class CommentListByUser(Resource):
                 ''', {}
             ))
 
-        db = get_db()
-        result = db.write_transaction(get_genres)
-        return [serialize_genre(record['genre']) for record in result]
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            result = db.write_transaction(get_genres)
+            return [serialize_genre(record['genre']) for record in result]
+        else:
+            return "invalid headers", 400
 
 
 #####
@@ -1659,872 +1752,872 @@ class CommentListByUser(Resource):
 
 
 ####
-
-
-class GenreList(Resource):
-    @swagger.doc({
-        'tags': ['genres'],
-        'summary': 'Find all genres',
-        'description': 'Returns all genres',
-        'responses': {
-            '200': {
-                'description': 'A list of genres',
-                'schema': GenreModel,
-            }
-        }
-    })
-    def get(self):
-        def get_genres(tx):
-            return list(tx.run('MATCH (genre:Genre) SET genre.id=id(genre) RETURN genre'))
-
-        db = get_db()
-        result = db.write_transaction(get_genres)
-        return [serialize_genre(record['genre']) for record in result]
-
-
-class Movie(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movie by ID',
-        'description': 'Returns a movie',
-        'parameters': [
-            {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'default': 'Token <token goes here>',
-                'required': False
-            },
-            {
-                'name': 'id',
-                'description': 'movie tmdbId, a string',
-                'in': 'path',
-                'type': 'string',
-                'required': True,
-            }
-        ],
-        'responses': {
-            '200': {
-                'description': 'A movie',
-                'schema': MovieModel,
-            },
-            '404': {
-                'description': 'movie not found'
-            },
-        }
-    })
-    def get(self, id):
-        def get_movie(tx, user_id, id):
-            return list(tx.run(
-                '''
-                MATCH (movie:Movie {tmdbId: $id})
-                OPTIONAL MATCH (movie)<-[my_rated:RATED]-(me:User {id: $user_id})
-                OPTIONAL MATCH (movie)<-[r:ACTED_IN]-(a:Person)
-                OPTIONAL MATCH (related:Movie)<--(a:Person) WHERE related <> movie
-                OPTIONAL MATCH (movie)-[:IN_GENRE]->(genre:Genre)
-                OPTIONAL MATCH (movie)<-[:DIRECTED]-(d:Person)
-                OPTIONAL MATCH (movie)<-[:PRODUCED]-(p:Person)
-                OPTIONAL MATCH (movie)<-[:WRITER_OF]-(w:Person)
-                WITH DISTINCT movie,
-                my_rated,
-                genre, d, p, w, a, r, related, count(related) AS countRelated
-                ORDER BY countRelated DESC
-                RETURN DISTINCT movie,
-                my_rated.rating AS my_rating,
-                collect(DISTINCT d) AS directors,
-                collect(DISTINCT p) AS producers,
-                collect(DISTINCT w) AS writers,
-                collect(DISTINCT{ name:a.name, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actors,
-                collect(DISTINCT related) AS related,
-                collect(DISTINCT genre) AS genres
-                ''', {'user_id': user_id, 'id': id}
-            ))
-
-        db = get_db()
-
-        result = db.read_transaction(get_movie, g.user['id'], id)
-        for record in result:
-            return {
-                'id': record['movie']['tmdbId'],
-                'title': record['movie']['title'],
-                'summary': record['movie']['plot'],
-                'released': record['movie']['released'],
-                'duration': record['movie']['runtime'],
-                'rated': record['movie']['rated'],
-                'tagline': record['movie']['plot'],
-                'poster_image': record['movie']['poster'],
-                'my_rating': record['my_rating'],
-                'genres': [serialize_genre(genre) for genre in record['genres']],
-                'directors': [serialize_person(director) for director in record['directors']],
-                'producers': [serialize_person(producer) for producer in record['producers']],
-                'writers': [serialize_person(writer) for writer in record['writers']],
-                'actors': [
-                    {
-                        'id': actor['id'],
-                        'name': actor['name'],
-                        'role': actor['role'],
-                        'poster_image': actor['poster_image'],
-                    } for actor in record['actors']
-                ],
-                'related': [serialize_movie(related) for related in record['related']],
-            }
-        return {'message': 'movie not found'}, 404
-
-
-class MovieList(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find all movies',
-        'description': 'Returns a list of movies',
-        'responses': {
-            '200': {
-                'description': 'A list of movies',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self):
-        def get_movies(tx):
-            return list(tx.run(
-                '''
-                MATCH (movie:Movie) RETURN movie
-                '''
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class MovieListByGenre(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movie by genre id',
-        'description': 'Returns a list of movies by genre',
-        'parameters': [
-            {
-                'name': 'genre_id',
-                'description': 'The name of the genre.',
-                'in': 'path',
-                'type': 'string',
-                'required': 'true'
-            }
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies with the specified genre',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self, genre_id):
-        def get_movies_by_genre(tx, genre_id):
-            return list(tx.run(
-                '''
-                MATCH (movie:Movie)-[:IN_GENRE]->(genre:Genre)
-                WHERE toLower(genre.name) = toLower($genre_id)
-                    // while transitioning to the sandbox data
-                    OR id(genre) = toInteger($genre_id)
-                RETURN movie
-                ''', {'genre_id': genre_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_by_genre, genre_id)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-# Not sure this is useful anymore
-class MovieListByDateRange(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movie by year range',
-        'description': 'Returns a list of movies released between a range of years',
-        'parameters': [
-            {
-                'name': 'start',
-                'description': 'start year',
-                'in': 'path',
-                'type': 'integer',
-                'required': 'true'
-            },
-            {
-                'name': 'end',
-                'description': 'end year',
-                'in': 'path',
-                'type': 'integer',
-                'required': 'true'
-            }
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies released between the specified years',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self, start, end):
-        try:
-            params = {'start': start, 'end': end}
-        except ValueError:
-            return {'description': 'invalid year format'}, 400
-
-        def get_movies_list_by_date_range(tx, params):
-            return list(tx.run(
-                '''
-                MATCH (movie:Movie)
-                WHERE movie.year > $start AND movie.year < $end
-                RETURN movie
-                ''', params
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_list_by_date_range, params)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class MovieListByPersonActedIn(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movies by actor',
-        'description': 'Returns a list of movies that a person has acted in.',
-        'parameters': [
-            {
-                'name': 'person_id',
-                'description': 'person id',
-                'in': 'path',
-                'type': 'string',
-                'required': 'true'
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies the specified person has acted in',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self, person_id):
-        def get_movies_by_acted_in(tx, person_id):
-            return list(tx.run(
-                '''
-                MATCH (actor:Actor {tmdbId: $person_id})-[:ACTED_IN]->(movie:Movie)
-                RETURN DISTINCT movie
-                ''', {'person_id': person_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_by_acted_in, person_id)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class MovieListByWrittenBy(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movies by writer',
-        'description': 'Returns a list of movies writen by a person',
-        'parameters': [
-            {
-                'name': 'person_id',
-                'description': 'person id',
-                'in': 'path',
-                'type': 'string',
-                'required': 'true'
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies the specified person has written',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self, person_id):
-        def get_movies_list_written_by(tx, person_id):
-            return list(tx.run(
-                '''
-                MATCH (actor:Writer {tmdbId: $person_id})-[:WRITER_OF]->(movie:Movie)
-                RETURN DISTINCT movie
-                ''', {'person_id': person_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_list_written_by, person_id)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class MovieListByDirectedBy(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Find movies by director',
-        'description': 'Returns a list of movies directed by a person',
-        'parameters': [
-            {
-                'name': 'person_id',
-                'description': 'person id',
-                'in': 'path',
-                'type': 'string',
-                'required': 'true'
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies the specified person has directed',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    def get(self, person_id):
-        def get_movies_list_directed_by(tx, person_id):
-            return list(tx.run(
-                '''
-                MATCH (actor:Director {tmdbId: $person_id})-[:DIRECTED]->(movie:Movie)
-                RETURN DISTINCT movie
-                ''', {'person_id': person_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_list_directed_by, person_id)
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class MovieListRatedByMe(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'A list of movies the authorized user has rated.',
-        'description': 'A list of movies the authorized user has rated.',
-        'parameters': [
-            {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'default': 'Token <token goes here>',
-                'required': True
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of movies the authorized user has rated',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    @login_required
-    def get(self):
-        def get_movies_rated_by_me(tx, user_id):
-            return list(tx.run(
-                '''
-                MATCH (:User {id: $user_id})-[rated:RATED]->(movie:Movie)
-                RETURN DISTINCT movie, rated.rating as my_rating
-                ''', {'user_id': user_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_rated_by_me, g.user['id'])
-        return [serialize_movie(record['movie'], record['my_rating']) for record in result]
-
-
-class MovieListRecommended(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'A list of recommended movies for the authorized user.',
-        'description': 'A list of recommended movies for the authorized user.',
-        'parameters': [
-            {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'default': 'Token <token goes here>',
-                'required': True
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of recommended movies for the authorized user',
-                'schema': {
-                    'type': 'array',
-                    'items': MovieModel,
-                }
-            }
-        }
-    })
-    @login_required
-    def get(self):
-        def get_movies_list_recommended(tx, user_id):
-            return list(tx.run(
-                '''
-                MATCH (me:User {id: $user_id})-[my:RATED]->(m:Movie)
-                MATCH (other:User)-[their:RATED]->(m)
-                WHERE me <> other
-                AND abs(my.rating - their.rating) < 2
-                WITH other,m
-                MATCH (other)-[otherRating:RATED]->(movie:Movie)
-                WHERE movie <> m 
-                WITH avg(otherRating.rating) AS avgRating, movie
-                RETURN movie
-                ORDER BY avgRating desc
-                LIMIT 25
-                ''', {'user_id': user_id}
-            ))
-
-        db = get_db()
-        result = db.read_transaction(get_movies_list_recommended, g.user['id'])
-        return [serialize_movie(record['movie']) for record in result]
-
-
-class Person(Resource):
-    @swagger.doc({
-        'tags': ['people'],
-        'summary': 'Find person by id',
-        'description': 'Returns a person',
-        'parameters': [
-            {
-                'name': 'id',
-                'description': 'person id',
-                'in': 'path',
-                'type': 'integer',
-                'required': True
-            }
-        ],
-        'responses': {
-            '200': {
-                'description': 'A person',
-                'schema': PersonModel,
-            },
-            '404': {
-                'description': 'person not found'
-            },
-        }
-    })
-    def get(self, id):
-        def get_person_by_id(tx, user_id):
-            return list(tx.run(
-                '''
-                MATCH (person:Person {tmdbId: $id})
-                OPTIONAL MATCH (person)-[:DIRECTED]->(d:Movie)
-                OPTIONAL MATCH (person)<-[:PRODUCED]->(p:Movie)
-                OPTIONAL MATCH (person)<-[:WRITER_OF]->(w:Movie)
-                OPTIONAL MATCH (person)<-[r:ACTED_IN]->(a:Movie)
-                OPTIONAL MATCH (person)-->(movies)<-[relatedRole:ACTED_IN]-(relatedPerson)
-                RETURN DISTINCT person,
-                collect(DISTINCT { name:d.title, id:d.tmdbId, poster_image:d.poster}) AS directed,
-                collect(DISTINCT { name:p.title, id:p.tmdbId, poster_image:p.poster}) AS produced,
-                collect(DISTINCT { name:w.title, id:w.tmdbId, poster_image:w.poster}) AS wrote,
-                collect(DISTINCT{ name:a.title, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actedIn,
-                collect(DISTINCT{ name:relatedPerson.name, id:relatedPerson.tmdbId, poster_image:relatedPerson.poster, role:relatedRole.role}) AS related
-                ''', {'id': user_id}
-            ))
-
-        db = get_db()
-        results = db.read_transaction(get_person_by_id, id)
-        for record in results:
-            return {
-                'id': record['person']['id'],
-                'name': record['person']['name'],
-                'poster_image': record['person']['poster'],
-                'directed': [
-                    {
-                        'id': movie['id'],
-                        'name': movie['name'],
-                        'poster_image': movie['poster_image'],
-                    } for movie in record['directed']
-                ],
-                'produced': [
-                    {
-                        'id': movie['id'],
-                        'name': movie['name'],
-                        'poster_image': movie['poster_image'],
-                    } for movie in record['produced']
-                ],
-                'wrote': [
-                    {
-                        'id': movie['id'],
-                        'name': movie['name'],
-                        'poster_image': movie['poster_image'],
-                    } for movie in record['wrote']
-                ],
-                'actedIn': [
-                    {
-                        'id': movie['id'],
-                        'name': movie['name'],
-                        'poster_image': movie['poster_image'],
-                        'role': movie['role'],
-                    } for movie in record['actedIn']
-                ],
-                'related': [
-                    {
-                        'id': person['id'],
-                        'name': person['name'],
-                        'poster_image': person['poster_image'],
-                        'role': person['role'],
-                    } for person in record['related']
-                ],
-            }
-        return {'message': 'person not found'}, 404
-
-
-class PersonList(Resource):
-    @swagger.doc({
-        'tags': ['people'],
-        'summary': 'Find all people',
-        'description': 'Returns a list of people',
-        'responses': {
-            '200': {
-                'description': 'A list of people',
-                'schema': {
-                    'type': 'array',
-                    'items': PersonModel,
-                }
-            }
-        }
-    })
-    def get(self):
-        def get_persons_list(tx):
-            return list(tx.run(
-                '''
-                MATCH (person:Person) RETURN person
-                '''
-            ))
-
-        db = get_db()
-        results = db.read_transaction(get_persons_list)
-        return [serialize_person(record['person']) for record in results]
-
-
-class PersonBacon(Resource):
-    @swagger.doc({
-        'tags': ['people'],
-        'summary': 'Find all Bacon paths',
-        'description': 'Returns all bacon paths from person 1 to person 2',
-        'parameters': [
-            {
-                'name': 'name1',
-                'description': 'Name of the origin user',
-                'in': 'query',
-                'type': 'string',
-                'required': True,
-            },
-            {
-                'name': 'name2',
-                'description': 'Name of the target user',
-                'in': 'query',
-                'type': 'string',
-                'required': True,
-            }
-        ],
-        'responses': {
-            '200': {
-                'description': 'A list of people',
-                'schema': {
-                    'type': 'array',
-                    'items': PersonModel,
-                }
-            }
-        }
-    })
-    def get(self):
-        name1 = request.args['name1']
-        name2 = request.args['name2']
-
-        def get_bacon(tx, name1, name2):
-            return list(tx.run(
-                '''
-                MATCH p = shortestPath( (p1:Person {name: $name1})-[:ACTED_IN*]-(target:Person {name: $name2}) )
-                WITH [n IN nodes(p) WHERE n:Person | n] as bacon
-                UNWIND(bacon) AS person
-                RETURN DISTINCT person
-                ''', {'name1': name1, 'name2': name2}
-            ))
-
-        db = get_db()
-        results = db.read_transaction(get_bacon, name1, name2)
-        return [serialize_person(record['person']) for record in results]
-
-
-class Register(Resource):
-    @swagger.doc({
-        'tags': ['users'],
-        'summary': 'Register a new user',
-        'description': 'Register a new user',
-        'parameters': [
-            {
-                'name': 'body',
-                'in': 'body',
-                'schema': {
-                    'type': 'object',
-                    'properties': {
-                        'username': {
-                            'type': 'string',
-                        },
-                        'password': {
-                            'type': 'string',
-                        }
-                    }
-                }
-            },
-        ],
-        'responses': {
-            '201': {
-                'description': 'Your new user',
-                'schema': UserModel,
-            },
-            '400': {
-                'description': 'Error message(s)',
-            },
-        }
-    })
-    def post(self):
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-        if not username:
-            return {'username': 'This field is required.'}, 400
-        if not password:
-            return {'password': 'This field is required.'}, 400
-
-        def get_user_by_username(tx, username):
-            return tx.run(
-                '''
-                MATCH (user:User {username: $username}) RETURN user
-                ''', {'username': username}
-            ).single()
-
-        db = get_db()
-        result = db.read_transaction(get_user_by_username, username)
-        if result and result.get('user'):
-            return {'username': 'username already in use'}, 400
-
-        def create_user(tx, username, password):
-            return tx.run(
-                '''
-                CREATE (user:User {id: $id, username: $username, password: $password, api_key: $api_key}) RETURN user
-                ''',
-                {
-                    'id': str(uuid.uuid4()),
-                    'username': username,
-                    'password': hash_password(username, password),
-                    'api_key': binascii.hexlify(os.urandom(20)).decode()
-                }
-            ).single()
-
-        results = db.write_transaction(create_user, username, password)
-        user = results['user']
-        return serialize_user(user), 201
-
-
-class Login(Resource):
-    @swagger.doc({
-        'tags': ['users'],
-        'summary': 'Login',
-        'description': 'Login',
-        'parameters': [
-            {
-                'name': 'body',
-                'in': 'body',
-                'schema': {
-                    'type': 'object',
-                    'properties': {
-                        'username': {
-                            'type': 'string',
-                        },
-                        'password': {
-                            'type': 'string',
-                        }
-                    }
-                }
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'succesful login'
-            },
-            '400': {
-                'description': 'invalid credentials'
-            }
-        }
-    })
-    def post(self):
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-        if not username:
-            return {'username': 'This field is required.'}, 400
-        if not password:
-            return {'password': 'This field is required.'}, 400
-
-        def get_user_by_username(tx, username):
-            return tx.run(
-                '''
-                MATCH (user:User {username: $username}) RETURN user
-                ''', {'username': username}
-            ).single()
-
-        db = get_db()
-        result = db.read_transaction(get_user_by_username, username)
-        try:
-            user = result['user']
-        except KeyError:
-            return {'username': 'username does not exist'}, 400
-
-        expected_password = hash_password(user['username'], password)
-        if user['password'] != expected_password:
-            return {'password': 'wrong password'}, 400
-        return {
-            'token': user['api_key']
-        }
-
-
-class UserMe(Resource):
-    @swagger.doc({
-        'tags': ['users'],
-        'summary': 'Get your user',
-        'description': 'Get your user',
-        'parameters': [{
-            'name': 'Authorization',
-            'in': 'header',
-            'type': 'string',
-            'required': True,
-            'default': 'Token <token goes here>',
-        }],
-        'responses': {
-            '200': {
-                'description': 'the user',
-                'schema': UserModel,
-            },
-            '401': {
-                'description': 'invalid / missing authentication',
-            },
-        }
-    })
-    @login_required
-    def get(self):
-        return serialize_user(g.user)
-
-
-class RateMovie(Resource):
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Rate a movie from',
-        'description': 'Rate a movie from 0-5 inclusive',
-        'parameters': [
-            {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'required': True,
-                'default': 'Token <token goes here>',
-            },
-            {
-                'name': 'id',
-                'description': 'movie tmdbId',
-                'in': 'path',
-                'type': 'string',
-            },
-            {
-                'name': 'body',
-                'in': 'body',
-                'schema': {
-                    'type': 'object',
-                    'properties': {
-                        'rating': {
-                            'type': 'integer',
-                        },
-                    }
-                }
-            },
-        ],
-        'responses': {
-            '200': {
-                'description': 'movie rating saved'
-            },
-            '401': {
-                'description': 'invalid / missing authentication'
-            }
-        }
-    })
-    @login_required
-    def post(self, id):
-        parser = reqparse.RequestParser()
-        parser.add_argument('rating', choices=list(range(0, 6)), type=int, required=True,
-                            help='A rating from 0 - 5 inclusive (integers)')
-        args = parser.parse_args()
-        rating = args['rating']
-
-        def rate_movie(tx, user_id, movie_id, rating):
-            return tx.run(
-                '''
-                MATCH (u:User {id: $user_id}),(m:Movie {tmdbId: $movie_id})
-                MERGE (u)-[r:RATED]->(m)
-                SET r.rating = $rating
-                RETURN m
-                ''', {'user_id': user_id, 'movie_id': movie_id, 'rating': rating}
-            )
-
-        db = get_db()
-        results = db.write_transaction(rate_movie, g.user['id'], id, rating)
-        return {}
-
-    @swagger.doc({
-        'tags': ['movies'],
-        'summary': 'Delete your rating for a movie',
-        'description': 'Delete your rating for a movie',
-        'parameters': [
-            {
-                'name': 'Authorization',
-                'in': 'header',
-                'type': 'string',
-                'required': True,
-                'default': 'Token <token goes here>',
-            },
-            {
-                'name': 'id',
-                'description': 'movie tmdbId',
-                'in': 'path',
-                'type': 'string',
-            },
-        ],
-        'responses': {
-            '204': {
-                'description': 'movie rating deleted'
-            },
-            '401': {
-                'description': 'invalid / missing authentication'
-            }
-        }
-    })
-    @login_required
-    def delete(self, id):
-        def delete_rating(tx, user_id, movie_id):
-            return tx.run(
-                '''
-                MATCH (u:User {id: $user_id})-[r:RATED]->(m:Movie {tmdbId: $movie_id}) DELETE r
-                ''', {'movie_id': movie_id, 'user_id': user_id}
-            )
-
-        db = get_db()
-        db.write_transaction(delete_rating, g.user['id'], id)
-        return {}, 204
+#
+#
+# class GenreList(Resource):
+#     @swagger.doc({
+#         'tags': ['genres'],
+#         'summary': 'Find all genres',
+#         'description': 'Returns all genres',
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of genres',
+#                 'schema': GenreModel,
+#             }
+#         }
+#     })
+#     def get(self):
+#         def get_genres(tx):
+#             return list(tx.run('MATCH (genre:Genre) SET genre.id=id(genre) RETURN genre'))
+#
+#         db = get_db()
+#         result = db.write_transaction(get_genres)
+#         return [serialize_genre(record['genre']) for record in result]
+#
+#
+# class Movie(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movie by ID',
+#         'description': 'Returns a movie',
+#         'parameters': [
+#             {
+#                 'name': 'Authorization',
+#                 'in': 'header',
+#                 'type': 'string',
+#                 'default': 'Token <token goes here>',
+#                 'required': False
+#             },
+#             {
+#                 'name': 'id',
+#                 'description': 'movie tmdbId, a string',
+#                 'in': 'path',
+#                 'type': 'string',
+#                 'required': True,
+#             }
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A movie',
+#                 'schema': MovieModel,
+#             },
+#             '404': {
+#                 'description': 'movie not found'
+#             },
+#         }
+#     })
+#     def get(self, id):
+#         def get_movie(tx, user_id, id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (movie:Movie {tmdbId: $id})
+#                 OPTIONAL MATCH (movie)<-[my_rated:RATED]-(me:User {id: $user_id})
+#                 OPTIONAL MATCH (movie)<-[r:ACTED_IN]-(a:Person)
+#                 OPTIONAL MATCH (related:Movie)<--(a:Person) WHERE related <> movie
+#                 OPTIONAL MATCH (movie)-[:IN_GENRE]->(genre:Genre)
+#                 OPTIONAL MATCH (movie)<-[:DIRECTED]-(d:Person)
+#                 OPTIONAL MATCH (movie)<-[:PRODUCED]-(p:Person)
+#                 OPTIONAL MATCH (movie)<-[:WRITER_OF]-(w:Person)
+#                 WITH DISTINCT movie,
+#                 my_rated,
+#                 genre, d, p, w, a, r, related, count(related) AS countRelated
+#                 ORDER BY countRelated DESC
+#                 RETURN DISTINCT movie,
+#                 my_rated.rating AS my_rating,
+#                 collect(DISTINCT d) AS directors,
+#                 collect(DISTINCT p) AS producers,
+#                 collect(DISTINCT w) AS writers,
+#                 collect(DISTINCT{ name:a.name, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actors,
+#                 collect(DISTINCT related) AS related,
+#                 collect(DISTINCT genre) AS genres
+#                 ''', {'user_id': user_id, 'id': id}
+#             ))
+#
+#         db = get_db()
+#
+#         result = db.read_transaction(get_movie, g.user['id'], id)
+#         for record in result:
+#             return {
+#                 'id': record['movie']['tmdbId'],
+#                 'title': record['movie']['title'],
+#                 'summary': record['movie']['plot'],
+#                 'released': record['movie']['released'],
+#                 'duration': record['movie']['runtime'],
+#                 'rated': record['movie']['rated'],
+#                 'tagline': record['movie']['plot'],
+#                 'poster_image': record['movie']['poster'],
+#                 'my_rating': record['my_rating'],
+#                 'genres': [serialize_genre(genre) for genre in record['genres']],
+#                 'directors': [serialize_person(director) for director in record['directors']],
+#                 'producers': [serialize_person(producer) for producer in record['producers']],
+#                 'writers': [serialize_person(writer) for writer in record['writers']],
+#                 'actors': [
+#                     {
+#                         'id': actor['id'],
+#                         'name': actor['name'],
+#                         'role': actor['role'],
+#                         'poster_image': actor['poster_image'],
+#                     } for actor in record['actors']
+#                 ],
+#                 'related': [serialize_movie(related) for related in record['related']],
+#             }
+#         return {'message': 'movie not found'}, 404
+#
+#
+# class MovieList(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find all movies',
+#         'description': 'Returns a list of movies',
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self):
+#         def get_movies(tx):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (movie:Movie) RETURN movie
+#                 '''
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class MovieListByGenre(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movie by genre id',
+#         'description': 'Returns a list of movies by genre',
+#         'parameters': [
+#             {
+#                 'name': 'genre_id',
+#                 'description': 'The name of the genre.',
+#                 'in': 'path',
+#                 'type': 'string',
+#                 'required': 'true'
+#             }
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies with the specified genre',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self, genre_id):
+#         def get_movies_by_genre(tx, genre_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (movie:Movie)-[:IN_GENRE]->(genre:Genre)
+#                 WHERE toLower(genre.name) = toLower($genre_id)
+#                     // while transitioning to the sandbox data
+#                     OR id(genre) = toInteger($genre_id)
+#                 RETURN movie
+#                 ''', {'genre_id': genre_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_by_genre, genre_id)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# # Not sure this is useful anymore
+# class MovieListByDateRange(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movie by year range',
+#         'description': 'Returns a list of movies released between a range of years',
+#         'parameters': [
+#             {
+#                 'name': 'start',
+#                 'description': 'start year',
+#                 'in': 'path',
+#                 'type': 'integer',
+#                 'required': 'true'
+#             },
+#             {
+#                 'name': 'end',
+#                 'description': 'end year',
+#                 'in': 'path',
+#                 'type': 'integer',
+#                 'required': 'true'
+#             }
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies released between the specified years',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self, start, end):
+#         try:
+#             params = {'start': start, 'end': end}
+#         except ValueError:
+#             return {'description': 'invalid year format'}, 400
+#
+#         def get_movies_list_by_date_range(tx, params):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (movie:Movie)
+#                 WHERE movie.year > $start AND movie.year < $end
+#                 RETURN movie
+#                 ''', params
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_list_by_date_range, params)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class MovieListByPersonActedIn(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movies by actor',
+#         'description': 'Returns a list of movies that a person has acted in.',
+#         'parameters': [
+#             {
+#                 'name': 'person_id',
+#                 'description': 'person id',
+#                 'in': 'path',
+#                 'type': 'string',
+#                 'required': 'true'
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies the specified person has acted in',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self, person_id):
+#         def get_movies_by_acted_in(tx, person_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (actor:Actor {tmdbId: $person_id})-[:ACTED_IN]->(movie:Movie)
+#                 RETURN DISTINCT movie
+#                 ''', {'person_id': person_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_by_acted_in, person_id)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class MovieListByWrittenBy(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movies by writer',
+#         'description': 'Returns a list of movies writen by a person',
+#         'parameters': [
+#             {
+#                 'name': 'person_id',
+#                 'description': 'person id',
+#                 'in': 'path',
+#                 'type': 'string',
+#                 'required': 'true'
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies the specified person has written',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self, person_id):
+#         def get_movies_list_written_by(tx, person_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (actor:Writer {tmdbId: $person_id})-[:WRITER_OF]->(movie:Movie)
+#                 RETURN DISTINCT movie
+#                 ''', {'person_id': person_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_list_written_by, person_id)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class MovieListByDirectedBy(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Find movies by director',
+#         'description': 'Returns a list of movies directed by a person',
+#         'parameters': [
+#             {
+#                 'name': 'person_id',
+#                 'description': 'person id',
+#                 'in': 'path',
+#                 'type': 'string',
+#                 'required': 'true'
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies the specified person has directed',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self, person_id):
+#         def get_movies_list_directed_by(tx, person_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (actor:Director {tmdbId: $person_id})-[:DIRECTED]->(movie:Movie)
+#                 RETURN DISTINCT movie
+#                 ''', {'person_id': person_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_list_directed_by, person_id)
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class MovieListRatedByMe(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'A list of movies the authorized user has rated.',
+#         'description': 'A list of movies the authorized user has rated.',
+#         'parameters': [
+#             {
+#                 'name': 'Authorization',
+#                 'in': 'header',
+#                 'type': 'string',
+#                 'default': 'Token <token goes here>',
+#                 'required': True
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of movies the authorized user has rated',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     @login_required
+#     def get(self):
+#         def get_movies_rated_by_me(tx, user_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (:User {id: $user_id})-[rated:RATED]->(movie:Movie)
+#                 RETURN DISTINCT movie, rated.rating as my_rating
+#                 ''', {'user_id': user_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_rated_by_me, g.user['id'])
+#         return [serialize_movie(record['movie'], record['my_rating']) for record in result]
+#
+#
+# class MovieListRecommended(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'A list of recommended movies for the authorized user.',
+#         'description': 'A list of recommended movies for the authorized user.',
+#         'parameters': [
+#             {
+#                 'name': 'Authorization',
+#                 'in': 'header',
+#                 'type': 'string',
+#                 'default': 'Token <token goes here>',
+#                 'required': True
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of recommended movies for the authorized user',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': MovieModel,
+#                 }
+#             }
+#         }
+#     })
+#     @login_required
+#     def get(self):
+#         def get_movies_list_recommended(tx, user_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (me:User {id: $user_id})-[my:RATED]->(m:Movie)
+#                 MATCH (other:User)-[their:RATED]->(m)
+#                 WHERE me <> other
+#                 AND abs(my.rating - their.rating) < 2
+#                 WITH other,m
+#                 MATCH (other)-[otherRating:RATED]->(movie:Movie)
+#                 WHERE movie <> m
+#                 WITH avg(otherRating.rating) AS avgRating, movie
+#                 RETURN movie
+#                 ORDER BY avgRating desc
+#                 LIMIT 25
+#                 ''', {'user_id': user_id}
+#             ))
+#
+#         db = get_db()
+#         result = db.read_transaction(get_movies_list_recommended, g.user['id'])
+#         return [serialize_movie(record['movie']) for record in result]
+#
+#
+# class Person(Resource):
+#     @swagger.doc({
+#         'tags': ['people'],
+#         'summary': 'Find person by id',
+#         'description': 'Returns a person',
+#         'parameters': [
+#             {
+#                 'name': 'id',
+#                 'description': 'person id',
+#                 'in': 'path',
+#                 'type': 'integer',
+#                 'required': True
+#             }
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A person',
+#                 'schema': PersonModel,
+#             },
+#             '404': {
+#                 'description': 'person not found'
+#             },
+#         }
+#     })
+#     def get(self, id):
+#         def get_person_by_id(tx, user_id):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (person:Person {tmdbId: $id})
+#                 OPTIONAL MATCH (person)-[:DIRECTED]->(d:Movie)
+#                 OPTIONAL MATCH (person)<-[:PRODUCED]->(p:Movie)
+#                 OPTIONAL MATCH (person)<-[:WRITER_OF]->(w:Movie)
+#                 OPTIONAL MATCH (person)<-[r:ACTED_IN]->(a:Movie)
+#                 OPTIONAL MATCH (person)-->(movies)<-[relatedRole:ACTED_IN]-(relatedPerson)
+#                 RETURN DISTINCT person,
+#                 collect(DISTINCT { name:d.title, id:d.tmdbId, poster_image:d.poster}) AS directed,
+#                 collect(DISTINCT { name:p.title, id:p.tmdbId, poster_image:p.poster}) AS produced,
+#                 collect(DISTINCT { name:w.title, id:w.tmdbId, poster_image:w.poster}) AS wrote,
+#                 collect(DISTINCT{ name:a.title, id:a.tmdbId, poster_image:a.poster, role:r.role}) AS actedIn,
+#                 collect(DISTINCT{ name:relatedPerson.name, id:relatedPerson.tmdbId, poster_image:relatedPerson.poster, role:relatedRole.role}) AS related
+#                 ''', {'id': user_id}
+#             ))
+#
+#         db = get_db()
+#         results = db.read_transaction(get_person_by_id, id)
+#         for record in results:
+#             return {
+#                 'id': record['person']['id'],
+#                 'name': record['person']['name'],
+#                 'poster_image': record['person']['poster'],
+#                 'directed': [
+#                     {
+#                         'id': movie['id'],
+#                         'name': movie['name'],
+#                         'poster_image': movie['poster_image'],
+#                     } for movie in record['directed']
+#                 ],
+#                 'produced': [
+#                     {
+#                         'id': movie['id'],
+#                         'name': movie['name'],
+#                         'poster_image': movie['poster_image'],
+#                     } for movie in record['produced']
+#                 ],
+#                 'wrote': [
+#                     {
+#                         'id': movie['id'],
+#                         'name': movie['name'],
+#                         'poster_image': movie['poster_image'],
+#                     } for movie in record['wrote']
+#                 ],
+#                 'actedIn': [
+#                     {
+#                         'id': movie['id'],
+#                         'name': movie['name'],
+#                         'poster_image': movie['poster_image'],
+#                         'role': movie['role'],
+#                     } for movie in record['actedIn']
+#                 ],
+#                 'related': [
+#                     {
+#                         'id': person['id'],
+#                         'name': person['name'],
+#                         'poster_image': person['poster_image'],
+#                         'role': person['role'],
+#                     } for person in record['related']
+#                 ],
+#             }
+#         return {'message': 'person not found'}, 404
+#
+#
+# class PersonList(Resource):
+#     @swagger.doc({
+#         'tags': ['people'],
+#         'summary': 'Find all people',
+#         'description': 'Returns a list of people',
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of people',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': PersonModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self):
+#         def get_persons_list(tx):
+#             return list(tx.run(
+#                 '''
+#                 MATCH (person:Person) RETURN person
+#                 '''
+#             ))
+#
+#         db = get_db()
+#         results = db.read_transaction(get_persons_list)
+#         return [serialize_person(record['person']) for record in results]
+#
+#
+# class PersonBacon(Resource):
+#     @swagger.doc({
+#         'tags': ['people'],
+#         'summary': 'Find all Bacon paths',
+#         'description': 'Returns all bacon paths from person 1 to person 2',
+#         'parameters': [
+#             {
+#                 'name': 'name1',
+#                 'description': 'Name of the origin user',
+#                 'in': 'query',
+#                 'type': 'string',
+#                 'required': True,
+#             },
+#             {
+#                 'name': 'name2',
+#                 'description': 'Name of the target user',
+#                 'in': 'query',
+#                 'type': 'string',
+#                 'required': True,
+#             }
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'A list of people',
+#                 'schema': {
+#                     'type': 'array',
+#                     'items': PersonModel,
+#                 }
+#             }
+#         }
+#     })
+#     def get(self):
+#         name1 = request.args['name1']
+#         name2 = request.args['name2']
+#
+#         def get_bacon(tx, name1, name2):
+#             return list(tx.run(
+#                 '''
+#                 MATCH p = shortestPath( (p1:Person {name: $name1})-[:ACTED_IN*]-(target:Person {name: $name2}) )
+#                 WITH [n IN nodes(p) WHERE n:Person | n] as bacon
+#                 UNWIND(bacon) AS person
+#                 RETURN DISTINCT person
+#                 ''', {'name1': name1, 'name2': name2}
+#             ))
+#
+#         db = get_db()
+#         results = db.read_transaction(get_bacon, name1, name2)
+#         return [serialize_person(record['person']) for record in results]
+#
+#
+# class Register(Resource):
+#     @swagger.doc({
+#         'tags': ['users'],
+#         'summary': 'Register a new user',
+#         'description': 'Register a new user',
+#         'parameters': [
+#             {
+#                 'name': 'body',
+#                 'in': 'body',
+#                 'schema': {
+#                     'type': 'object',
+#                     'properties': {
+#                         'username': {
+#                             'type': 'string',
+#                         },
+#                         'password': {
+#                             'type': 'string',
+#                         }
+#                     }
+#                 }
+#             },
+#         ],
+#         'responses': {
+#             '201': {
+#                 'description': 'Your new user',
+#                 'schema': UserModel,
+#             },
+#             '400': {
+#                 'description': 'Error message(s)',
+#             },
+#         }
+#     })
+#     def post(self):
+#         data = request.get_json()
+#         username = data.get('username')
+#         password = data.get('password')
+#         if not username:
+#             return {'username': 'This field is required.'}, 400
+#         if not password:
+#             return {'password': 'This field is required.'}, 400
+#
+#         def get_user_by_username(tx, username):
+#             return tx.run(
+#                 '''
+#                 MATCH (user:User {username: $username}) RETURN user
+#                 ''', {'username': username}
+#             ).single()
+#
+#         db = get_db()
+#         result = db.read_transaction(get_user_by_username, username)
+#         if result and result.get('user'):
+#             return {'username': 'username already in use'}, 400
+#
+#         def create_user(tx, username, password):
+#             return tx.run(
+#                 '''
+#                 CREATE (user:User {id: $id, username: $username, password: $password, api_key: $api_key}) RETURN user
+#                 ''',
+#                 {
+#                     'id': str(uuid.uuid4()),
+#                     'username': username,
+#                     'password': hash_password(username, password),
+#                     'api_key': binascii.hexlify(os.urandom(20)).decode()
+#                 }
+#             ).single()
+#
+#         results = db.write_transaction(create_user, username, password)
+#         user = results['user']
+#         return serialize_user(user), 201
+#
+#
+# class Login(Resource):
+#     @swagger.doc({
+#         'tags': ['users'],
+#         'summary': 'Login',
+#         'description': 'Login',
+#         'parameters': [
+#             {
+#                 'name': 'body',
+#                 'in': 'body',
+#                 'schema': {
+#                     'type': 'object',
+#                     'properties': {
+#                         'username': {
+#                             'type': 'string',
+#                         },
+#                         'password': {
+#                             'type': 'string',
+#                         }
+#                     }
+#                 }
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'succesful login'
+#             },
+#             '400': {
+#                 'description': 'invalid credentials'
+#             }
+#         }
+#     })
+#     def post(self):
+#         data = request.get_json()
+#         username = data.get('username')
+#         password = data.get('password')
+#         if not username:
+#             return {'username': 'This field is required.'}, 400
+#         if not password:
+#             return {'password': 'This field is required.'}, 400
+#
+#         def get_user_by_username(tx, username):
+#             return tx.run(
+#                 '''
+#                 MATCH (user:User {username: $username}) RETURN user
+#                 ''', {'username': username}
+#             ).single()
+#
+#         db = get_db()
+#         result = db.read_transaction(get_user_by_username, username)
+#         try:
+#             user = result['user']
+#         except KeyError:
+#             return {'username': 'username does not exist'}, 400
+#
+#         expected_password = hash_password(user['username'], password)
+#         if user['password'] != expected_password:
+#             return {'password': 'wrong password'}, 400
+#         return {
+#             'token': user['api_key']
+#         }
+#
+#
+# class UserMe(Resource):
+#     @swagger.doc({
+#         'tags': ['users'],
+#         'summary': 'Get your user',
+#         'description': 'Get your user',
+#         'parameters': [{
+#             'name': 'Authorization',
+#             'in': 'header',
+#             'type': 'string',
+#             'required': True,
+#             'default': 'Token <token goes here>',
+#         }],
+#         'responses': {
+#             '200': {
+#                 'description': 'the user',
+#                 'schema': UserModel,
+#             },
+#             '401': {
+#                 'description': 'invalid / missing authentication',
+#             },
+#         }
+#     })
+#     @login_required
+#     def get(self):
+#         return serialize_user(g.user)
+#
+#
+# class RateMovie(Resource):
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Rate a movie from',
+#         'description': 'Rate a movie from 0-5 inclusive',
+#         'parameters': [
+#             {
+#                 'name': 'Authorization',
+#                 'in': 'header',
+#                 'type': 'string',
+#                 'required': True,
+#                 'default': 'Token <token goes here>',
+#             },
+#             {
+#                 'name': 'id',
+#                 'description': 'movie tmdbId',
+#                 'in': 'path',
+#                 'type': 'string',
+#             },
+#             {
+#                 'name': 'body',
+#                 'in': 'body',
+#                 'schema': {
+#                     'type': 'object',
+#                     'properties': {
+#                         'rating': {
+#                             'type': 'integer',
+#                         },
+#                     }
+#                 }
+#             },
+#         ],
+#         'responses': {
+#             '200': {
+#                 'description': 'movie rating saved'
+#             },
+#             '401': {
+#                 'description': 'invalid / missing authentication'
+#             }
+#         }
+#     })
+#     @login_required
+#     def post(self, id):
+#         parser = reqparse.RequestParser()
+#         parser.add_argument('rating', choices=list(range(0, 6)), type=int, required=True,
+#                             help='A rating from 0 - 5 inclusive (integers)')
+#         args = parser.parse_args()
+#         rating = args['rating']
+#
+#         def rate_movie(tx, user_id, movie_id, rating):
+#             return tx.run(
+#                 '''
+#                 MATCH (u:User {id: $user_id}),(m:Movie {tmdbId: $movie_id})
+#                 MERGE (u)-[r:RATED]->(m)
+#                 SET r.rating = $rating
+#                 RETURN m
+#                 ''', {'user_id': user_id, 'movie_id': movie_id, 'rating': rating}
+#             )
+#
+#         db = get_db()
+#         results = db.write_transaction(rate_movie, g.user['id'], id, rating)
+#         return {}
+#
+#     @swagger.doc({
+#         'tags': ['movies'],
+#         'summary': 'Delete your rating for a movie',
+#         'description': 'Delete your rating for a movie',
+#         'parameters': [
+#             {
+#                 'name': 'Authorization',
+#                 'in': 'header',
+#                 'type': 'string',
+#                 'required': True,
+#                 'default': 'Token <token goes here>',
+#             },
+#             {
+#                 'name': 'id',
+#                 'description': 'movie tmdbId',
+#                 'in': 'path',
+#                 'type': 'string',
+#             },
+#         ],
+#         'responses': {
+#             '204': {
+#                 'description': 'movie rating deleted'
+#             },
+#             '401': {
+#                 'description': 'invalid / missing authentication'
+#             }
+#         }
+#     })
+#     @login_required
+#     def delete(self, id):
+#         def delete_rating(tx, user_id, movie_id):
+#             return tx.run(
+#                 '''
+#                 MATCH (u:User {id: $user_id})-[r:RATED]->(m:Movie {tmdbId: $movie_id}) DELETE r
+#                 ''', {'movie_id': movie_id, 'user_id': user_id}
+#             )
+#
+#         db = get_db()
+#         db.write_transaction(delete_rating, g.user['id'], id)
+#         return {}, 204
 
 
 # return intersection of multiple lists
@@ -2548,23 +2641,23 @@ def intersect_nodes(lists):
 
 
 api.add_resource(ApiDocs, '/docs', '/docs/<path:path>')
-api.add_resource(GenreList, '/api/v0/genres')
-api.add_resource(Movie, '/api/v0/movies/<string:id>')
-api.add_resource(RateMovie, '/api/v0/movies/<string:id>/rate')
-api.add_resource(MovieList, '/api/v0/movies')
-api.add_resource(MovieListByGenre, '/api/v0/movies/genre/<string:genre_id>/')
-api.add_resource(MovieListByDateRange, '/api/v0/movies/daterange/<int:start>/<int:end>')
-api.add_resource(MovieListByPersonActedIn, '/api/v0/movies/acted_in_by/<string:person_id>')
-api.add_resource(MovieListByWrittenBy, '/api/v0/movies/written_by/<string:person_id>')
-api.add_resource(MovieListByDirectedBy, '/api/v0/movies/directed_by/<string:person_id>')
-api.add_resource(MovieListRatedByMe, '/api/v0/movies/rated')
-api.add_resource(MovieListRecommended, '/api/v0/movies/recommended')
-api.add_resource(Person, '/api/v0/people/<string:id>')
-api.add_resource(PersonList, '/api/v0/people')
-api.add_resource(PersonBacon, '/api/v0/people/bacon')
-api.add_resource(Register, '/api/v0/register')
-api.add_resource(Login, '/api/v0/login')
-api.add_resource(UserMe, '/api/v0/users/me')
+# api.add_resource(GenreList, '/api/v0/genres')
+# api.add_resource(Movie, '/api/v0/movies/<string:id>')
+# api.add_resource(RateMovie, '/api/v0/movies/<string:id>/rate')
+# api.add_resource(MovieList, '/api/v0/movies')
+# api.add_resource(MovieListByGenre, '/api/v0/movies/genre/<string:genre_id>/')
+# api.add_resource(MovieListByDateRange, '/api/v0/movies/daterange/<int:start>/<int:end>')
+# api.add_resource(MovieListByPersonActedIn, '/api/v0/movies/acted_in_by/<string:person_id>')
+# api.add_resource(MovieListByWrittenBy, '/api/v0/movies/written_by/<string:person_id>')
+# api.add_resource(MovieListByDirectedBy, '/api/v0/movies/directed_by/<string:person_id>')
+# api.add_resource(MovieListRatedByMe, '/api/v0/movies/rated')
+# api.add_resource(MovieListRecommended, '/api/v0/movies/recommended')
+# api.add_resource(Person, '/api/v0/people/<string:id>')
+# api.add_resource(PersonList, '/api/v0/people')
+# api.add_resource(PersonBacon, '/api/v0/people/bacon')
+# api.add_resource(Register, '/api/v0/register')
+# api.add_resource(Login, '/api/v0/login')
+# api.add_resource(UserMe, '/api/v0/users/me')
 api.add_resource(CategoryListByIndustry, '/api/gaia/categories/')
 api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/')
 api.add_resource(AnalyticsMerchantCompatioSales, '/api/gaia/analytics/merchant_compatio_sales/')
