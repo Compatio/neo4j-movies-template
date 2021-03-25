@@ -27,7 +27,7 @@ app = Flask(__name__)
 CORS(app)
 FlaskJSON(app)
 
-api = Api(app, title='Flask GMS Test', api_version='0.0.1')
+api = Api(app, title='GAIA', api_version='0.1.0')
 
 
 @api.representation('application/json')
@@ -1054,13 +1054,7 @@ class DynamicConfigurator(Resource):
                     # print(record)
                     # set up product selections dict
                     context['product_selections'][record['category']] = record['product']
-            # if catalog mapping
-            # if len(context['product_selections'].keys()) == 0 and context['merchant_key'] != '""' and context['variant_id'] != ['""']:
-            #     zzz = catalog_map_input(tx, context)
-            print(context)
-            #     for record in zzz:
-            #         context['product_selections'][record['category']] = record['product']
-            # context['product_selections'] = dict(zzz)
+
             # if no model id
             if context['model_id'] is None:
                 # run dynamic compatio
@@ -1223,14 +1217,14 @@ class DynamicConfigurator(Resource):
                 ''', {'prods': [context['product_selections'][k]
                                 for k in context['product_selections'].keys()]}
             ))
-            print(result)
+            # print(result)
             data = {
                 'cats': [record['cats'] for record in result][0],
                 'prods': [record['prods'] for record in result][0],
                 'rules': [record['rules'] for record in result][0],
                 'compatio_edges': [record['compatio_edges'] for record in result][0]
             }
-            print(data)
+            # print(data)
             ans = {}
             for pair in data['rules']:
                 if not tuple(sorted((pair['context_cat'], pair['compatio_cat']))) in ans.keys():
@@ -1270,6 +1264,156 @@ class DynamicConfigurator(Resource):
         result = db.write_transaction(smart_builder, context)
         # return result
         return [record for record in result]
+
+
+class ValidateBuild(Resource):
+    @swagger.doc({
+        'tags': ['SmartBuilder'],
+        'summary': 'Validate a build',
+        'description': 'Returns build validation report for provided input',
+        'parameters': [
+            {
+                'name': 'product_selections',
+                'description': 'currently selected products, as JSON string',
+                'in': 'path',
+                'type': 'string',
+                'required': False
+            }, {
+                'name': 'model_id',
+                'description': 'uid for configurator, "" for none',
+                'in': 'path',
+                'type': 'string',
+                'required': False
+            }, {
+                'name': 'merchant_key',
+                'description': 'key for merchant',
+                'in': 'path',
+                'type': 'string',
+                'required': False
+            }, {
+                'name': 'variant_id',
+                'description': 'list of variant ids',
+                'in': 'path',
+                'type': 'array',
+                'items': {
+                    'type': 'string'
+                },
+                'required': False
+            },
+        ],
+        'responses': {
+            '200': {
+                'description': 'SmartBuilder input and results, includes product attributes if no merchant_key',
+                'schema': SmartBuilderModel,
+            },
+            '401': {
+                'description': 'invalid / missing authentication',
+            },
+        }
+    })
+    def get(self):
+        context = {
+            'product_selections': request.args.get('product_selections'),
+            'model_id': request.args.get('model_id'),
+            'merchant_key': request.args.get('merchant_key'),
+            'variant_id': request.args.get('variant_id')
+        }
+        if context['variant_id'] is not None:
+            context['variant_id'] = context['variant_id'].split(',')
+
+        def smart_validate(tx, context):
+            # if product selections isn't empty
+            if context['product_selections'] is not None:
+                context['product_selections'] = json.loads(context['product_selections'])
+            elif context['merchant_key'] is not None and context['variant_id'] is not None:
+                # empty dict
+                context['product_selections'] = {}
+                # for each categorized product
+                for record in catalog_map_input(tx, context):
+                    # print(record)
+                    # set up product selections dict
+                    context['product_selections'][record['category']] = record['product']
+
+            return [validate_build(tx, context)]
+
+
+        def catalog_map_input(tx, context):
+            result = list(tx.run(
+                '''
+                UNWIND $variant_id AS variant
+                MATCH (y:Party {key:$merchant_key})--(s:Sku{sku:variant})--(p:Product)--(c:Category)
+                RETURN DISTINCT c.name as category, p.uid as product
+                ''', {'variant_id': context['variant_id'], 'merchant_key': context['merchant_key']}
+            ))
+            return [{'category': record['category'], 'product': record['product']} for record in result]
+
+
+
+        def validate_build(tx, context):
+            result = list(tx.run(
+                '''
+                UNWIND $prods as prod
+                MATCH (p:Product {uid:prod})--(c:Category)
+                WITH DISTINCT p,c
+                MATCH (c)--(r:CompatioRule{commit:True})--(d:Category)--(q:Product)
+                WHERE q.uid in $prods
+                WITH DISTINCT p,c,d,{rule_name:r.name,rule_uid:r.uid} as rule_by_cat
+                WITH p,c, {context_cat:c.name,compatio_cat:d.name,rules:collect(DISTINCT rule_by_cat)} as rules_by_cat
+                OPTIONAL MATCH (p)-[e:COMPATIO]-(q:Product)
+                WHERE q.uid in $prods
+                RETURN collect(distinct c.name) as cats,
+                     collect(distinct e.rule) as compatio_edges, 
+                     collect(distinct p.uid) as prods,
+                     collect(distinct rules_by_cat) as rules
+                ''', {'prods': [context['product_selections'][k]
+                                for k in context['product_selections'].keys()]}
+            ))
+            # print(result)
+            data = {
+                'cats': [record['cats'] for record in result][0],
+                'prods': [record['prods'] for record in result][0],
+                'rules': [record['rules'] for record in result][0],
+                'compatio_edges': [record['compatio_edges'] for record in result][0]
+            }
+            # print(data)
+            ans = {}
+            for pair in data['rules']:
+                if not tuple(sorted((pair['context_cat'], pair['compatio_cat']))) in ans.keys():
+                    ans[tuple(sorted((pair['context_cat'], pair['compatio_cat'])))] = pair['rules']
+                else:
+                    if not (ans[tuple(sorted((pair['context_cat'], pair['compatio_cat'])))] == pair['rules']):
+                        print('ERROR!?! What did you even do???')
+            next = {}
+            # for each tuple
+            for k in ans.keys():
+                # make a string version of it
+                next[str(k)] = ans[k]
+
+            data['rules'] = next
+            # computes boolean if the intersection of the edge list and the category pair's rule list has a length > 0 for all category pairs
+            data['result'] = True
+            data['failures'] = {}
+            # for each category pair k
+            for k in data['rules'].keys():
+                # if the intersection of the rule uids for that category pair and the available edges is not >0
+                if not len(intersect_nodes([[j['rule_uid'] for j in data['rules'][k]],
+                                            data['compatio_edges']])) > 0:
+                    # set result to False
+                    data['result'] = False
+                    # add category tuple data to failures
+                    data['failures'][k] = data['rules'][k]
+
+            # if result is still true
+            if data['result']:
+                del data['failures']
+            return data
+
+        db = get_db()
+
+        result = db.write_transaction(smart_validate, context)
+        # return result
+        return [record for record in result]
+
 
 
 class CompatioScoreByProduct(Resource):
@@ -2350,4 +2494,5 @@ api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_
 api.add_resource(AnalyticsMerchantCompatioSales, '/api/gaia/analytics/merchant_compatio_sales/')
 api.add_resource(AnalyticsMerchantTotalSales, '/api/gaia/analytics/merchant_total_sales/')
 api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
+api.add_resource(ValidateBuild, '/api/gaia/xdc/validate/')
 api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
