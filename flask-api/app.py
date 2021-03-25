@@ -505,6 +505,19 @@ class SmartBuilderModel(Schema):
     }
 
 
+class CategoryScoreReportModel(Schema):
+    type = 'object'
+    properties = {
+        'input': {
+            'type': 'object'
+        },
+        'results': {
+            'type': 'array',
+            'items': CategoryScoredProductsModel
+        }
+    }
+
+
 def serialize_scored_product(scored):
     return {
         'product': scored['product'],
@@ -753,6 +766,13 @@ class AnalyticsEventByDateRange(Resource):
         'description': 'Returns a list of analytics events which occurred between a range of timestamp inputs',
         'parameters': [
             {
+                'name': 'merchant_key',
+                'description': 'api key for merchant',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+            {
                 'name': 'start',
                 'description': 'start timestamp',
                 'in': 'path',
@@ -779,15 +799,17 @@ class AnalyticsEventByDateRange(Resource):
     })
     def get(self):
         try:
-            params = {'start': request.args.get('start'), 'end': request.args.get('end')}
+            params = {'merchant_key':request.args.get('merchant_key'),
+                      'start': request.args.get('start'),
+                      'end': request.args.get('end')}
         except ValueError:
             return {'description': 'invalid year format'}, 400
 
         def get_event_list_by_date_range(tx, params):
             return list(tx.run(
                 '''
-                MATCH (e:Event)
-                WHERE $start <= e.timestamp <= $end
+                MATCH (y:Party)-->(e:Event)
+                WHERE y.key = $merchant_key and $start <= e.timestamp <= $end
                 WITH e
                 OPTIONAL MATCH (e)-[x]-(s:Sku)
                 WITH e, collect(properties(x)) as payload
@@ -1148,15 +1170,15 @@ class DynamicConfigurator(Resource):
                 for c in query_cats['data']:
                     # print(len(c['products']))
                     # if not in the context already
-                    if not c['cat_name'] in context['product_selections'].keys():
-                        # if ans has category
-                        if c['cat_name'] in ans.keys():
-                            # intersect the products already available in ans with the new products
-                            ans[c['cat_name']] = intersect_nodes([ans[c['cat_name']], c['products']])
-                        # else
-                        else:
-                            # add category to ans
-                            ans[c['cat_name']] = c['products']
+                    # if not c['cat_name'] in context['product_selections'].keys():
+                    # if ans has category
+                    if c['cat_name'] in ans.keys():
+                        # intersect the products already available in ans with the new products
+                        ans[c['cat_name']] = intersect_nodes([ans[c['cat_name']], c['products']])
+                    # else
+                    else:
+                        # add category to ans
+                        ans[c['cat_name']] = c['products']
             return dict(ans)
 
         def configtr_compatio_products(tx, context):
@@ -1413,6 +1435,60 @@ class ValidateBuild(Resource):
         result = db.write_transaction(smart_validate, context)
         # return result
         return [record for record in result]
+
+
+class CompatioScoreForCategoryPair(Resource):
+    @swagger.doc({
+        'tags': ['compatio'],
+        'summary': 'Calculate score and set on edge for all COMPATIO pairs for category pair',
+        'description': 'For the category pair, the code gathers all COMPATIO edges between products of the two categories. It then calculates the Compatio Score for the product pair, and writes the score into the edges between the products.',
+        'parameters': [
+            {
+                'name': 'category_x',
+                'description': 'input category name',
+                'in': 'path',
+                'type': 'string',
+                'required': True
+            },
+            {
+                'name': 'category_y',
+                'description': 'input category name',
+                'in': 'path',
+                'type': 'string',
+                'required': True
+            }
+        ],
+        'responses': {
+            '200': {
+                'description': 'A list of genres',
+                'schema': CategoryScoreReportModel,
+            }
+        }
+    })
+    def get(self):
+        categories = {'x':request.args.get('category_x'),'y':request.args.get('category_y')}
+
+        def calculate_compatio_score(tx, categories):
+            return list(tx.run(
+                '''
+                MATCH (x:Category{name:$x})--(p:Product)-[:COMPATIO]-(q:Product)--(y:Category{name:$y})
+                WITH distinct x, y, p, q
+                MATCH (p)--(v:AttributeValue)-[s:SCORE]-(w:AttributeValue)--(q)
+                WITH distinct x, y, p, q,
+                    1.0-(abs(p.normalized_min_ad_price-q.normalized_min_ad_price)*$price_wt)-(avg(s.weight)*$score_wt) as score
+                MATCH (p)-[p2q:COMPATIO]->(q)-[q2p:COMPATIO]->(p)
+                SET p2q.score = score,
+                    q2p.score = score
+                RETURN x.name as x, y.name as y, count(p2q) as x2y, count(q2p) as y2x
+                ''', {'x':categories['x'],'y':categories['y'],'price_wt':0.01,'score_wt':(0.1618*2)}
+            ))
+
+
+        # print(request.args)
+        db = get_db()
+
+        result = db.write_transaction(calculate_compatio_score, categories)
+        return [dict(record) for record in result]
 
 
 
@@ -2496,3 +2572,4 @@ api.add_resource(AnalyticsMerchantTotalSales, '/api/gaia/analytics/merchant_tota
 api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
 api.add_resource(ValidateBuild, '/api/gaia/xdc/validate/')
 api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
+api.add_resource(CompatioScoreForCategoryPair,'/api/gaia/score/update/')
