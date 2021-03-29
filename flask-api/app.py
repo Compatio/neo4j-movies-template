@@ -993,7 +993,7 @@ class AnalyticsMerchantCompatioSales(Resource):
             return "invalid headers", 400
 
 
-# catalog mapping
+# catalog mapping todo
 class SkuMappingForProductList(Resource):
     @swagger.doc({
         'tags': ['products'],
@@ -1702,6 +1702,79 @@ class CompatioScoreByProduct(Resource):
             return [dict(record) for record in result]
         else:
             return "invalid headers", 400
+
+
+
+class CheckActiveRules(Resource):
+    @swagger.doc({
+        'tags': ['genres'],
+        'summary': 'Find all genres',
+        'description': 'Returns all genres',
+        'parameters': [
+            {
+                'name': 'rules',
+                'description': 'list of rule uids as comma-separated string',
+                'in': 'path',
+                'type': 'string',
+                'required': False
+            },
+            {
+                'name': 'check_listed_rules',
+                'description': 'true to check listed rules, false to check all other rules',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
+        ],
+        'responses': {
+            '200': {
+                'description': 'A list of genres',
+                'schema': GenreModel,
+            }
+        }
+    })
+    def get(self):
+        rules = request.args.get('rules').split(',')
+        check_listed_rules = request.args.get('check_listed_rules')
+        # print(check_listed_rules)
+        def check_rules_in_list(tx, rules):
+            return list(tx.run(
+                '''
+                MATCH ()-[c:COMPATIO]->()
+                WHERE c.rule in $rules
+                RETURN c.rule as rule, count(c) as edge_count, collect(distinct c.active) as acts
+                ''', {'rules': rules}
+            ))
+        def check_rules_not_in_list(tx, rules):
+            return list(tx.run(
+                '''
+                MATCH ()-[c:COMPATIO]->()
+                WHERE NOT c.rule in $rules
+                RETURN c.rule as rule, count(c) as edge_count, collect(distinct c.active) as acts
+                ''', {'rules': rules}
+            ))
+
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            if check_listed_rules == 'True' or check_listed_rules == 'true':
+                result = db.write_transaction(check_rules_in_list, rules)
+            else:
+                result = db.write_transaction(check_rules_not_in_list, rules)
+            return [{'rule': record['rule'],
+                     'edge_count': record['edge_count'],
+                     'active_flags': record['acts']} for record in result]
+        else:
+            return "invalid headers", 400
+
+
+
 
 
 #####
@@ -2666,3 +2739,4 @@ api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
 api.add_resource(ValidateBuild, '/api/gaia/xdc/validate/')
 api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
 api.add_resource(CompatioScoreForCategoryPair,'/api/gaia/score/update/')
+api.add_resource(CheckActiveRules,'/api/gaia/score/check_rules/')
