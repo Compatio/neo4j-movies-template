@@ -5,7 +5,9 @@ import ast
 import re
 import sys
 import uuid
+from sympy import expand
 import json
+import itertools
 from dotenv import load_dotenv, find_dotenv
 from datetime import datetime
 from functools import wraps
@@ -57,15 +59,15 @@ def env(key, default=None, required=True):
 # DATABASE_URL = env('MOVIE_DATABASE_URL')
 
 # gms
-DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
-DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
-DATABASE_URL = env('PROD_MASTER_URL')
+# DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
+# DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
+# DATABASE_URL = env('PROD_MASTER_URL')
 GAIA_KEY = env('XRS_API_KEY')
 
-# # gms
-# DATABASE_USERNAME = env('DEV_GRAPH_USERNAME')
-# DATABASE_PASSWORD = env('DEV_GRAPH_PASSWORD')
-# DATABASE_URL = env('DEV_GRAPH_URL')
+# gms
+DATABASE_USERNAME = env('DEV_GRAPH_USERNAME')
+DATABASE_PASSWORD = env('DEV_GRAPH_PASSWORD')
+DATABASE_URL = env('DEV_GRAPH_URL')
 
 driver = GraphDatabase.driver(DATABASE_URL, auth=basic_auth(DATABASE_USERNAME, str(DATABASE_PASSWORD)))
 
@@ -816,7 +818,7 @@ class AnalyticsEventByDateRange(Resource):
     })
     def get(self):
         try:
-            params = {'merchant_key':request.args.get('merchant_key'),
+            params = {'merchant_key': request.args.get('merchant_key'),
                       'start': request.args.get('start'),
                       'end': request.args.get('end')}
         except ValueError:
@@ -904,6 +906,7 @@ class AnalyticsMerchantTotalSales(Resource):
                 ORDER BY timestamp
                 ''', {'merchant_key': merchant_key}
             ))
+
         def get_merchant_sales_sixty(tx, merchant_key):
             return list(tx.run(
                 '''
@@ -927,17 +930,18 @@ class AnalyticsMerchantTotalSales(Resource):
             elif mode == 'thirty':
                 result = db.read_transaction(get_merchant_sales_thirty, merchant_key)
                 return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
-                         'thirty_day_count': record['thirty_day_count'], 'thirty_day_sales': record['thirty_day_sales']} for record in result]
+                         'thirty_day_count': record['thirty_day_count'], 'thirty_day_sales': record['thirty_day_sales']}
+                        for record in result]
 
             elif mode == 'sixty':
                 result = db.read_transaction(get_merchant_sales_sixty, merchant_key)
                 return [{'timestamp': record['timestamp'], 'event_sum': record['event_sum'],
-                         'sixty_day_count': record['sixty_day_count'], 'sixty_day_sales': record['sixty_day_sales']} for record in result]
+                         'sixty_day_count': record['sixty_day_count'], 'sixty_day_sales': record['sixty_day_sales']} for
+                        record in result]
             else:
                 return "Please choose a different mode", 401
         else:
             return "invalid headers", 400
-
 
 
 class AnalyticsMerchantCompatioSales(Resource):
@@ -981,14 +985,14 @@ class AnalyticsMerchantCompatioSales(Resource):
                 WHERE r.is_xrs_recommended or r.item_source in ['XCS','XRS','Bundler'] 
                 WITH {timestamp:e.timestamp,items:collect(properties(r)), partial_sum:sum(toFloat(r.price)*toFloat(r.quantity))} as event 
                 RETURN collect(event) as events, sum(event.partial_sum) as total
-                ''', {'merchant_key':merchant_key}
+                ''', {'merchant_key': merchant_key}
             ))
 
         # print(request.headers)
         if request.headers.get('gaia-key') == GAIA_KEY:
             db = get_db()
             result = db.read_transaction(get_merchant_compatio_sales, merchant_key)
-            return [{'events':record['events'],'total':record['total']} for record in result]
+            return [{'events': record['events'], 'total': record['total']} for record in result]
         else:
             return "invalid headers", 400
 
@@ -1425,7 +1429,6 @@ class ValidateBuild(Resource):
 
             return [validate_build(tx, context)]
 
-
         def catalog_map_input(tx, context):
             result = list(tx.run(
                 '''
@@ -1435,8 +1438,6 @@ class ValidateBuild(Resource):
                 ''', {'variant_id': context['variant_id'], 'merchant_key': context['merchant_key']}
             ))
             return [{'category': record['category'], 'product': record['product']} for record in result]
-
-
 
         def validate_build(tx, context):
             result = list(tx.run(
@@ -1543,7 +1544,7 @@ class CompatioScoreForCategoryPair(Resource):
         }
     })
     def get(self):
-        categories = {'x':request.args.get('category_x'),'y':request.args.get('category_y')}
+        categories = {'x': request.args.get('category_x'), 'y': request.args.get('category_y')}
 
         def calculate_compatio_score(tx, categories):
             return list(tx.run(
@@ -1557,9 +1558,8 @@ class CompatioScoreForCategoryPair(Resource):
                 SET p2q.score = score,
                     q2p.score = score
                 RETURN x.name as x, y.name as y, count(p2q) as x2y, count(q2p) as y2x
-                ''', {'x':categories['x'],'y':categories['y'],'price_wt':0.01,'score_wt':(0.1618*2)}
+                ''', {'x': categories['x'], 'y': categories['y'], 'price_wt': 0.01, 'score_wt': (0.1618 * 2)}
             ))
-
 
         # print(request.args)
         if request.headers.get('gaia-key') == GAIA_KEY:
@@ -1570,6 +1570,453 @@ class CompatioScoreForCategoryPair(Resource):
         else:
             return "invalid headers", 400
 
+
+class RunRuleByUid(Resource):
+    @swagger.doc({
+        'tags': ['compatio'],
+        'summary': 'Calculate scored edges for rule uid input.',
+        'description': 'For the rule input, the code calculates the valid product pairs that satisfy the rule. It then calculates the Compatio Score for the product pair, and writes the score into the edges between the products.',
+        'parameters': [
+            {
+                'name': 'rule_uid',
+                'description': 'uid for rule',
+                'in': 'path',
+                'type': 'string',
+                'required': True
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
+        ],
+        'responses': {
+            '200': {
+                'description': 'A list of genres',
+                'schema': CategoryScoreReportModel,
+            }
+        }
+    })
+    def get(self):
+        # labels = ['left', 'right']
+        # pairs = [dict(zip(labels, p)) for p in request.args.get('product_pairs')]
+        rule_uid = request.args.get('rule_uid')
+
+        # rule_body = request.args.get('rule_body')
+
+        def get_rule_body(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (r:CompatioRule {uid:$rule})
+                RETURN r.body as body
+                ''', {'rule': rule_uid}
+            ))
+            return [{'body': ast.literal_eval(record['body'])} for record in result]
+
+        def get_queryEq(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE v.value = $value
+                RETURN collect(DISTINCT p.uid) as prods
+        	
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryNotEq(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE NOT v.value = $value
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryLt(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE toFloat(v.value) < toFloat($value)
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryLte(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE toFloat(v.value) <= toFloat($value)
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryGt(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE toFloat(v.value) > toFloat($value)
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryGte(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                WHERE toFloat(v.value) >= toFloat($value)
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_queryAll(tx, queryData):
+            result = list(tx.run(
+                '''
+                MATCH (p:Product)--(c:Category {uid:$catID})
+                RETURN collect(DISTINCT p.uid) as prods
+                ''', queryData
+            ))
+            return result[0]['prods']
+
+        def get_filtered_products(categoryID, filters):
+            """
+            parse the filter json
+            take one of the side (left or right)
+            returns list of strings which are product ids
+            """
+            ans = {}
+            lovop = []
+            op = []
+            for f in filters:
+                if 'lovName' in f:
+                    queryData = {'catID': categoryID, 'attrID': f['attrID'], 'value': f['lovName']}
+                    if f['conditionOpName'] == '==':
+                        results = db.read_transaction(get_queryEq, queryData)
+
+                    elif f['conditionOpName'] == '!=':
+                        # results, meta = db.cypher_query(queryNotEq, queryData)
+                        # new version with disqualifier interpretation
+                        # get products with disqualifying value
+                        resultsDq = db.read_transaction(get_queryEq, queryData)
+                        # get all products in the category
+                        results = db.read_transaction(get_queryAll, queryData)
+                        # for each disqualified product
+                        for dq in resultsDq:
+                            # if it's in the list
+                            if dq in results:
+                                # remove the product from results
+                                results.remove(dq)
+
+                    elif f['conditionOpName'] == '<':
+                        results = db.read_transaction(get_queryLt, queryData)
+                    elif f['conditionOpName'] == '<=':
+                        results = db.read_transaction(get_queryLte, queryData)
+                    elif f['conditionOpName'] == '>':
+                        results = db.read_transaction(get_queryGt, queryData)
+                    elif f['conditionOpName'] == '>=':
+                        results = db.read_transaction(get_queryGte, queryData)
+                    else:
+                        results, meta = ['Operator Error', f['conditionOpName']]
+
+                    lovop.extend([results])
+                elif 'attrID' in f:
+                    if f['attrID'] == 0 and f['lovID'] == 0:
+                        return db.read_transaction(get_queryAll, {'catID': categoryID})
+
+                elif 'lovName' not in f:
+                    op.append(f['value'])
+            op.reverse()
+            lovop.reverse()
+
+            if '7' in op or 7 in op:
+                return intersect_nodes(lovop)
+            else:
+                return unionlist(lovop)
+
+        def unionlist(lst):
+            result = set()
+            for i in lst:
+                result = result | set(i)
+            return (list(result))
+
+        def get_operator_by_code(key):
+            """
+            get operator for against a unique operator id
+            :param key:
+            :return operator:
+            """
+            key = str(key)
+            switcher = {
+                '1': 'INTERSECTS',
+                '2': 'GT',
+                '3': 'LT',
+                '4': 'GTE',
+                '5': 'LTE',
+                '6': 'EQ',
+                '7': '*',
+                '8': '+',
+                '9': 'NE',
+            }
+            return switcher.get(key)
+
+        def add_ids(rule_array):
+            """
+            This function is used to add auto calculated id in each conditions and filter available
+            :param rule_array:
+            :return:
+            """
+            conditions_array = []
+            for item in rule_array:
+                if isinstance(item, list):
+                    conditions_array += add_ids(item)
+                elif item['type'] == 'Condition':
+                    cid = ('a' + (item['position'].replace('-', '')))
+                    conditions_array.append({
+                        'cid': cid,
+                        'rightAttrID': item['rightAttrID'],
+                        'leftAttrID': item['leftAttrID'],
+                        'operator': item['subConditionOp'],
+                        'leftFilter': item['leftFilters'],
+                        'rightFilter': item['rightFilters'],
+                        'expr_type': 'Base'
+                    })
+
+            return conditions_array
+
+        def generate_expr(rule_array):
+            """
+            Generate expression
+            :param rule_array:
+            :return string:
+            """
+            rule_expr = ''
+            for item in rule_array:
+                if isinstance(item, list):
+                    rule_expr += '(' + generate_expr(item) + ')'
+                elif item['type'] == 'Operator':
+                    rule_expr += get_operator_by_code(str(item['subConditionOp']))
+                else:
+                    oprand = 'a' + (item['position'].replace('-', ''))
+                    rule_expr += oprand
+
+            return rule_expr
+
+        def valid(left, oper, right):
+            if oper == 'EQ':
+                return left == right
+            elif oper == '!EQ' or oper == 'NE':
+                return left != right
+
+            # these need translation to float for numeric, but there is some data overlap
+            elif oper == 'LTE':
+                try:
+                    return float(left) <= float(right)
+                except:
+                    return left <= right
+            elif oper == 'LT':
+                try:
+                    return float(left) < float(right)
+                except:
+                    return left < right
+            elif oper == 'GTE':
+                try:
+                    return float(left) >= float(right)
+                except:
+                    return left >= right
+            elif oper == 'GT':
+                try:
+                    return float(left) > float(right)
+                except:
+                    return left > right
+            else:
+                return False
+
+        def rule_dnf(rule_string):
+            """
+            Sympy module used to expand the expression
+            :param rule_string:
+            :return String:
+            """
+            if not rule_string:
+                return ''
+            return str(expand(rule_string)).replace('not', '!')
+
+        def parse_rule(parsed_json):
+            """
+            This method will generate result set and save the same on rule object over the DB
+            :return:
+            """
+            result_set = {}
+            # rule_json = rule_builder_json.replace("'", "\"")
+            # parsed_json = json.loads(rule_json)
+            result_set.update({
+                'leftCatID': parsed_json.get('leftCatID'),
+                'rightCatID': parsed_json.get('rightCatID'),
+                'conditions': [],
+                'dnfCases': []
+            })
+            # Adding condition to result set
+            conditions = add_ids(parsed_json['rule']['rule'])
+            for item in conditions:
+                if item.get('expr_type') == "Base":
+                    # fetch filtered products from left and right and add to condition dict
+                    left = get_filtered_products(result_set['leftCatID'], item['leftFilter'])
+
+                    right = get_filtered_products(result_set['rightCatID'], item['rightFilter'])
+
+                    # add condition to conditions
+                    result_set.get('conditions').append({
+                        'id': item.get('cid'),
+                        'leftAttrID': item.get('leftAttrID'),
+                        'rightAttrID': item.get('rightAttrID'),
+                        'operator': get_operator_by_code(item.get('operator')),
+                        'leftFilterProds': sorted(left),
+                        'rightFilterProds': sorted(right),
+                    })
+                else:
+                    result_set.get('conditions').append({
+                        'id': item.get('cid'),
+                        'leftAttrID': item.get('leftAttrID'),
+                        'rightAttrID': item.get('rightAttrID'),
+                        'operator': item.get('operator'),
+                    })
+
+            # generate dnf cases
+            dnf_cases = rule_dnf(generate_expr(parsed_json["rule"]["rule"]))
+            if dnf_cases:
+                # split on or
+                for item in dnf_cases.split('+'):
+                    # empty list
+                    d = []
+                    # split on and
+                    for x in item.split('*'):
+                        # add to list
+                        d.append({'id': x.strip()})
+                    # add list to dict
+                    datalist = {'conditions': d}
+                    # add list to dnfCases list
+                    result_set.get('dnfCases').append(datalist)
+
+            return result_set
+
+        def get_prods_for_condition(tx, data):
+            result = list(tx.run(
+                '''
+                MATCH (a:Attribute {uid:$attrID})--(v:AttributeValue)--(p:Product)--(c:Category {uid:$catID})
+                RETURN a.name as attr,v.value as value,c.name as cat, collect(DISTINCT p.uid) as prods
+                ORDER BY value,cat
+                ''', data
+            ))
+            return [{'attr': record['attr'],
+                     'value': record['value'],
+                     'cat': record['cat'],
+                     'prods': record['prods']} for record in result]
+
+        def fetch_product_pairings(parsed_rule):
+            # dict of condition product-pair sets
+            product_set = {}
+            # for each condition
+            for c in parsed_rule['conditions']:
+                # gather products by value on left side of condition
+                left = db.read_transaction(get_prods_for_condition, {'attrID': c['leftAttrID'],
+                                                                      'catID': parsed_rule['leftCatID']})
+                # gather products by value on right side of condition
+                right = db.read_transaction(get_prods_for_condition, {'attrID': c['rightAttrID'],
+                                                                       'catID': parsed_rule['rightCatID']})
+                # create set
+                conditionPairs = set()
+                # for each value on the left
+                for l in left:
+                    # for each value on the right
+                    for r in right:
+                        # if they satisfy the operator
+                        if valid(l['value'], c['operator'], r['value']):
+                            # for each cartesian product tuple of the filtered lists
+                            for i in list(itertools.product(intersect_nodes([l['prods'], c['leftFilterProds']]),
+                                                            intersect_nodes([r['prods'], c['rightFilterProds']]))):
+                                # add to the set
+                                conditionPairs.add(i)
+                # add condition's set to dict
+                product_set[c['id']] = list(conditionPairs)
+            # return when all conditions are parsed and added to dict
+            return product_set
+
+        def resolve_rule(dnf_rule, product_set):
+            # product_set holds dict of parsed product-pairs by condition with id keys
+            resultSet = set()
+            # now loop through each dnf cases and intersect all the pairs for each condition in the case
+            for dnf in dnf_rule:
+                # for each product pair in the intersection of pairs from all conditions for each dnf case
+                for i in intersect_nodes([product_set[cond['id']] for cond in dnf['conditions']]):
+                    # add pair to set
+                    resultSet.add(i)
+            # return result set as sorted list for consistency
+            return sorted(list(resultSet))
+
+        def calc_compatible_product_pairs(rule_body):
+            """
+            takes Json Rule body as an argument. parse rule's conditions, including filter products and DNF, and return it
+            """
+            parsed_rule = parse_rule(rule_body)
+
+            # For every condition, fetch a pair of compatible products and store it in a dictionary such as
+            # key is representation of condition ID and value is the list of tuples returned.
+            # For e.
+            # product set {'A': [(1, 2), (3, 4)], 'B': [(234, 245), (425, 248)]}
+            product_set = fetch_product_pairings(parsed_rule)
+            # generate final pairs by intersecting DNF condition tuples
+
+            return resolve_rule(parsed_rule['dnfCases'], product_set)
+
+        def calculate_compatio_score(tx, pairs, rule_uid):
+            result = list(tx.run(
+                '''
+                UNWIND $pairs as pair
+                MATCH (p:Product {uid:pair.left})--(v:AttributeValue)-[s:SCORE]-(w:AttributeValue)--(q:Product {uid:pair.right})
+                WITH distinct p, q,
+                    1.0-(abs(p.normalized_min_ad_price-q.normalized_min_ad_price)*$price_wt)-(avg(s.weight)*$score_wt) as score
+                MERGE (p)-[p2q:COMPATIO {rule:$rule}]->(q)-[q2p:COMPATIO {rule:$rule}]->(p)
+                SET p2q.score = score,
+                    q2p.score = score
+                RETURN avg(score) as mean_score, max(score) as max_score, min(score) as min_score, count(p2q) as x2y, count(q2p) as y2x
+                ''', {'pairs': [{'left':pair[0],'right':pair[1]} for pair in pairs], 'rule': rule_uid, 'price_wt': 0.01, 'score_wt': (0.1618 * 2)}
+
+            ))
+            return {'rule': rule_uid, 'mean_score': result[0]['mean_score'], 'max_score': result[0]['max_score'],
+                    'min_score': result[0]['min_score'], 'x2y': result[0]['x2y'], 'y2x': result[0]['y2x']}
+
+        def get_rule_edge_count(tx,rule_uid):
+            result = list(tx.run(
+                '''
+                MATCH ()-[c:COMPATIO {rule:$rule}]-()
+                RETURN count(distinct c) as count
+                ''', {'rule':rule_uid}
+            ))
+            return result[0]['count']
+
+        # print(request.args)
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            ans = {}
+            # pairs = []
+            ans['initial_count'] = db.read_transaction(get_rule_edge_count, rule_uid)
+            result = db.read_transaction(get_rule_body, rule_uid)
+            body = [dict(record) for record in result][0]
+            # return parse_rule(body['body'])
+            pairs = calc_compatible_product_pairs(body['body'])
+            ans['result'] = db.write_transaction(calculate_compatio_score, pairs, rule_uid)
+            ans['end_count'] = db.read_transaction(get_rule_edge_count, rule_uid)
+            return ans
+
+        else:
+            return "invalid headers", 400
 
 
 class CompatioScoreByProduct(Resource):
@@ -1635,7 +2082,6 @@ class CompatioScoreByProduct(Resource):
                 ''', {'variant_id': variant_id, 'merchant_key': merchant_key}
             ))
             return [record['product'] for record in result]
-
 
         def compatio_score(tx, root_uid):
             return list(tx.run(
@@ -1704,7 +2150,6 @@ class CompatioScoreByProduct(Resource):
             return "invalid headers", 400
 
 
-
 class CheckActiveRules(Resource):
     @swagger.doc({
         'tags': ['genres'],
@@ -1743,6 +2188,7 @@ class CheckActiveRules(Resource):
     def get(self):
         rules = request.args.get('rules').split(',')
         check_listed_rules = request.args.get('check_listed_rules')
+
         # print(check_listed_rules)
         def check_rules_in_list(tx, rules):
             return list(tx.run(
@@ -1752,6 +2198,7 @@ class CheckActiveRules(Resource):
                 RETURN c.rule as rule, count(c) as edge_count, collect(distinct c.active) as acts
                 ''', {'rules': rules}
             ))
+
         def check_rules_not_in_list(tx, rules):
             return list(tx.run(
                 '''
@@ -1772,9 +2219,6 @@ class CheckActiveRules(Resource):
                      'active_flags': record['acts']} for record in result]
         else:
             return "invalid headers", 400
-
-
-
 
 
 #####
@@ -2735,8 +3179,9 @@ api.add_resource(CategoryListByIndustry, '/api/gaia/categories/')
 api.add_resource(AnalyticsEventByDateRange, '/api/gaia/analytics/events_by_date_range/')
 api.add_resource(AnalyticsMerchantCompatioSales, '/api/gaia/analytics/merchant_compatio_sales/')
 api.add_resource(AnalyticsMerchantTotalSales, '/api/gaia/analytics/merchant_total_sales/')
-api.add_resource(DynamicConfigurator,'/api/gaia/xdc/')
+api.add_resource(DynamicConfigurator, '/api/gaia/xdc/')
 api.add_resource(ValidateBuild, '/api/gaia/xdc/validate/')
-api.add_resource(CompatioScoreByProduct,'/api/gaia/score/')
-api.add_resource(CompatioScoreForCategoryPair,'/api/gaia/score/update/')
-api.add_resource(CheckActiveRules,'/api/gaia/score/check_rules/')
+api.add_resource(CompatioScoreByProduct, '/api/gaia/score/')
+api.add_resource(CompatioScoreForCategoryPair, '/api/gaia/score/update/')
+api.add_resource(CheckActiveRules, '/api/gaia/score/check_rules/')
+api.add_resource(RunRuleBodyWithScore, '/api/gaia/score/run/')
