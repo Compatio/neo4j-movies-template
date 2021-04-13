@@ -2225,6 +2225,86 @@ class CheckActiveRules(Resource):
             return "invalid headers", 400
 
 
+
+class GetGlobalABSOrdering(Resource):
+    @swagger.doc({
+        'tags': ['genres'],
+        'summary': 'Find all genres',
+        'description': 'Returns all genres',
+        'parameters': [
+            {
+                'name': 'rules',
+                'description': 'list of rule uids as comma-separated string',
+                'in': 'path',
+                'type': 'string',
+                'required': False
+            },
+            {
+                'name': 'check_listed_rules',
+                'description': 'true to check listed rules, false to check all other rules',
+                'in': 'path',
+                'type': 'string',
+                'required': 'true'
+            },
+            {
+                'name': 'gaia-key',
+                'description': 'api key',
+                'in': 'header',
+                'type': 'string',
+                'required': 'true'
+            }
+        ],
+        'responses': {
+            '200': {
+                'description': 'A list of genres',
+                'schema': GenreModel,
+            }
+        }
+    })
+    def get(self):
+        def get_global_abs_ordering(tx):
+            return list(tx.run(
+                '''
+                match (i:Industry)--(c:Category{name:"ABS-CORE"})-[x]-(a:Attribute {abs_enabled:True})
+                with i.name as ind,{name:a.name,rank:x.abs_attribute_order} as attr
+                order by attr.rank
+                return ind as industry, collect(distinct attr) as attrs
+                ''', {}
+            ))
+
+        if request.headers.get('gaia-key') == GAIA_KEY:
+            db = get_db()
+            result = db.write_transaction(get_global_abs_ordering)
+            data = [{'industry': record['industry'],
+                     'attrs': record['attrs']} for record in result]
+            # empty set
+            overlap = set()
+            # for each industry
+            for d in data:
+                # create a copy
+                test = data.copy()
+                # isolate the other industries
+                test.remove(d)
+                # get their unioned attributes
+                disjoint = union_nodes([[a['name'] for a in ind['attrs']] for ind in test])
+                # for each attribute in industry
+                for a in d['attrs']:
+                    # if it's in the disjoint
+                    if a['name'] in disjoint:
+                        # add to overlap
+                        overlap.add(a['name'])
+            # for each industry
+            for d in data:
+                # loop through again
+                for a in d['attrs']:
+                    # if in global overlap
+                    if a['name'] in overlap:
+                        # remove from industry attrs list
+                        d['attrs'].remove(a)
+            return {'uniques': data, 'overlap': list(overlap)}
+        else:
+            return "invalid headers", 400
+
 #####
 
 
@@ -3160,6 +3240,21 @@ def intersect_nodes(lists):
         # return list of elements in this list and all others
         return list(set(i).intersection(intersect_nodes(lists)))
 
+# return union of node lists
+def union_nodes(lists):
+    # create blank answer list
+    ans = list()
+    # for each list
+    for i in lists:
+        # for each node
+        for node in i:
+            # if it's not in ans
+            if node not in ans:
+                # add to ans
+                ans.append(node)
+    # RETURN
+    return ans
+
 
 api.add_resource(ApiDocs, '/docs', '/docs/<path:path>')
 # api.add_resource(GenreList, '/api/v0/genres')
@@ -3189,3 +3284,4 @@ api.add_resource(CompatioScoreByProduct, '/api/gaia/score/')
 api.add_resource(CompatioScoreForCategoryPair, '/api/gaia/score/update/')
 api.add_resource(CheckActiveRules, '/api/gaia/score/check_rules/')
 api.add_resource(RunRuleByUid, '/api/gaia/score/run/')
+api.add_resource(GetGlobalABSOrdering, '/api/gaia/xdc/abs_order/')
