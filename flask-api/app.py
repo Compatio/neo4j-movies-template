@@ -59,14 +59,14 @@ def env(key, default=None, required=True):
 # DATABASE_URL = env('MOVIE_DATABASE_URL')
 
 # gms
-DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
-DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
-DATABASE_URL = env('PROD_MASTER_URL')
+# DATABASE_USERNAME = env('PROD_MASTER_USERNAME')
+# DATABASE_PASSWORD = env('PROD_MASTER_PASSWORD')
+# DATABASE_URL = env('PROD_MASTER_URL')
 GAIA_KEY = env('XRS_API_KEY')
-#
-# DATABASE_USERNAME = env('PROD4_MASTER_USERNAME')
-# DATABASE_PASSWORD = env('PROD4_MASTER_PASSWORD')
-# DATABASE_URL = env('PROD4_MASTER_URL')
+
+DATABASE_USERNAME = env('PROD4_MASTER_USERNAME')
+DATABASE_PASSWORD = env('PROD4_MASTER_PASSWORD')
+DATABASE_URL = env('PROD4_MASTER_URL')
 
 # gms
 # DATABASE_USERNAME = env('DEV_GRAPH_USERNAME')
@@ -1283,7 +1283,120 @@ class DynamicConfigurator(Resource):
                         else:
                             # add category to ans
                             ans[c['cat_name']] = c['products']
+
+            # 'constraints': [
+            #     {
+            #         'first_term': {
+            #             'category': 'CRANKSET',
+            #             'attr': 'front-capacity'
+            #         },
+            #         'function': '+',
+            #         'second_term': {
+            #             'category': 'CASSETTE',
+            #             'attr': 'rear-capacity'
+            #         },
+            #         'operator': '<=',
+            #         'result': {
+            #             'category': 'REAR-DERAILLEUR',
+            #             'attr': 'total-capacity'
+            #         }
+            #     }
+            # ]
+            # check for constraints
+
+            constraints = check_constraints(tx, context)
+            # print('Hey constraints!! They look like: ' + constraints)
+            # if there are configuration constraints
+            if constraints is not None:
+                print('Hey constraints!! They look like: ' + constraints)
+                context['constraints'] = json.loads(constraints)
+                # for each parsed constraint
+                for con in config_constraints(tx,context):
+                    # for each category in the constraint result
+                    for k in con.keys():
+                        # if that category is in ans
+                        if k in ans.keys():
+                            # intersect the two lists
+                            ans[k] = intersect_nodes([ans[k], con[k]])
             return dict(ans)
+
+
+        def check_constraints(tx, context):
+            result = list(tx.run(
+                '''
+                MATCH (configtr:Configurator{uid:$model_id})
+                RETURN configtr.constraints as constraints
+                ''', {'model_id': context['model_id']}
+            ))
+            return result[0]['constraints']
+
+
+        def config_constraints(tx, context):
+            data = []
+            # for each constraint in the list
+            for c in context['constraints']:
+                ans = {}
+                # first and second terms
+                if c['first_term']['category'] in context['product_selections'].keys() and c['second_term'][
+                    'category'] in context['product_selections'].keys():
+                    q = """
+                    MATCH (fc:Category {name:$constraint.first_term.category})--(fp:Product {model_number:$fp})--(fv:AttributeValue)--(fa:Attribute{name:$constraint.first_term.attr})--(fc),
+                        (sc:Category {name:$constraint.second_term.category})--(sp:Product {model_number:$sp})--(sv:AttributeValue)--(sa:Attribute{name:$constraint.second_term.attr})--(sc),
+                        (rc:Category {name:$constraint.result.category})--(rp:Product)--(rv:AttributeValue)--(ra:Attribute{name:$constraint.result.attr})--(rc)
+                    WITH fc,fp,fv,fa,sc,sp,sv,sa,rc,rp,rv,ra
+                    MATCH (fp)-[cfs:COMPATIO]-(sp)-[csr:COMPATIO]-(rp)
+                    WHERE toInteger(fv.value) %s toInteger(sv.value) %s toInteger(rv.value)
+                    RETURN collect(DISTINCT {prod:rp.model_number, val:ra.name+'.'+rv.value}) as tuples
+                    """ % (c['function'], c['operator'])
+
+                    result = list(tx.run(q,
+                                        {'constraint': c,
+                                         'fp': context['product_selections'][c['first_term']['category']],
+                                         'sp': context['product_selections'][c['second_term']['category']]}))
+                    ans[c['result']['category']] = [i['prod'] for i in result[0]['tuples']]
+                    data.append(ans)
+
+                # first term and result
+                elif c['first_term']['category'] in context['product_selections'].keys() and c['result']['category'] in \
+                        context['product_selections'].keys():
+                    q = """
+                    MATCH (fc:Category {name:$constraint.first_term.category})--(fp:Product {model_number:$fp})--(fv:AttributeValue)--(fa:Attribute{name:$constraint.first_term.attr})--(fc),
+                        (sc:Category {name:$constraint.second_term.category})--(sp:Product)--(sv:AttributeValue)--(sa:Attribute{name:$constraint.second_term.attr})--(sc),
+                        (rc:Category {name:$constraint.result.category})--(rp:Product {model_number:$rp})--(rv:AttributeValue)--(ra:Attribute{name:$constraint.result.attr})--(rc)
+                    WITH fc,fp,fv,fa,sc,sp,sv,sa,rc,rp,rv,ra
+                    MATCH (fp)-[cfs:COMPATIO]-(sp)-[csr:COMPATIO]-(rp)
+                    WHERE toInteger(fv.value) %s toInteger(sv.value) %s toInteger(rv.value)
+                    RETURN collect(DISTINCT {prod:sp.model_number, val:sa.name+'.'+sv.value}) as tuples
+                    """ % (c['function'], c['operator'])
+
+                    result = list(tx.run(q,
+                                        {'constraint': c,
+                                         'fp': context['product_selections'][c['first_term']['category']],
+                                         'rp': context['product_selections'][c['result']['category']]}))
+                    ans[c['second_term']['category']] = [i['prod'] for i in result[0]['tuples']]
+                    data.append(ans)
+
+                # second term and results
+                elif c['second_term']['category'] in context['product_selections'].keys() and c['result']['category'] in \
+                        context['product_selections'].keys():
+                    q = """
+                    MATCH (fc:Category {name:$constraint.first_term.category})--(fp:Product)--(fv:AttributeValue)--(fa:Attribute{name:$constraint.first_term.attr})--(fc),
+                        (sc:Category {name:$constraint.second_term.category})--(sp:Product {model_number:$sp})--(sv:AttributeValue)--(sa:Attribute{name:$constraint.second_term.attr})--(sc),
+                        (rc:Category {name:$constraint.result.category})--(rp:Product {model_number:$rp})--(rv:AttributeValue)--(ra:Attribute{name:$constraint.result.attr})--(rc)
+                    WITH fc,fp,fv,fa,sc,sp,sv,sa,rc,rp,rv,ra
+                    MATCH (fp)-[cfs:COMPATIO]-(sp)-[csr:COMPATIO]-(rp)
+                    WHERE toInteger(fv.value) %s toInteger(sv.value) %s toInteger(rv.value)
+                    RETURN collect(DISTINCT {prod:fp.model_number, val:fa.name+'.'+fv.value}) as tuples
+                    """ % (c['function'], c['operator'])
+
+                    result = list(tx.run(q,
+                                        {'constraint': c,
+                                         'sp': context['product_selections'][c['second_term']['category']],
+                                         'rp': context['product_selections'][c['result']['category']]}))
+                    ans[c['first_term']['category']] = [i['prod'] for i in result[0]['tuples']]
+                    data.append(ans)
+
+            return data
 
         def validate_build(tx, context):
             result = list(tx.run(
@@ -1349,7 +1462,7 @@ class DynamicConfigurator(Resource):
         if request.headers.get('gaia-key') == GAIA_KEY:
             db = get_db()
 
-            result = db.write_transaction(smart_builder, context)
+            result = db.read_transaction(smart_builder, context)
             # return result
             return [record for record in result]
         else:
@@ -2304,6 +2417,8 @@ class GetGlobalABSOrdering(Resource):
             return {'uniques': data, 'overlap': list(overlap)}
         else:
             return "invalid headers", 400
+
+
 
 #####
 
