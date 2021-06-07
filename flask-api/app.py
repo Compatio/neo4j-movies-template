@@ -1139,8 +1139,17 @@ class DynamicConfigurator(Resource):
                 # for each categorized product
                 for record in catalog_map_input(tx, context):
                     # print(record)
-                    # set up product selections dict
-                    context['product_selections'][record['category']] = record['product']
+                    # if category already in product selections
+                    if record['category'] in context['product_selections'].keys():
+                        # create new list with previous element and new record
+                        # (can cause arbitrary nesting, handled in flatten_lists function)
+                        new_list = [context['product_selections'][record['category']], record['product']]
+                        # set category to new list (will flatten here also)
+                        context['product_selections'][record['category']] = flatten_lists(new_list)
+                    else:
+                        # set up product selections dict first
+                        context['product_selections'][record['category']] = record['product']
+                        # print('test')
 
             # if no model id
             if context['model_id'] is None:
@@ -1169,8 +1178,8 @@ class DynamicConfigurator(Resource):
                 'data': [
                     {'cat': cat,
                      'prods': ans[cat],
-                     'context': [context['product_selections'][k]
-                                 for k in context['product_selections'].keys()]
+                     'context': flatten_lists([context['product_selections'][k]
+                                               for k in context['product_selections'].keys()])
                      } for cat in ans.keys()]
             }
             if context.get('merchant_key') is None:
@@ -1222,9 +1231,8 @@ class DynamicConfigurator(Resource):
                 WITH root,{cat_name:qc.name,products:collect(distinct q.uid)} as cat
                 RETURN root.uid as root,collect(cat) as data
                 ''', {
-                    'data': [context['product_selections'][k]
-                             for k in context['product_selections'].keys()
-                             ]
+                    'data': flatten_lists([context['product_selections'][k]
+                             for k in context['product_selections'].keys()])
                 }
             ))
             # empty dict to fill
@@ -1262,9 +1270,8 @@ class DynamicConfigurator(Resource):
                 RETURN root.uid as root,collect(cat) as data
                 ''', {
                     'model_id': context['model_id'],
-                    'data': [context['product_selections'][k]
-                             for k in context['product_selections'].keys()
-                             ]
+                    'data': flatten_lists([context['product_selections'][k]
+                             for k in context['product_selections'].keys()])
                 }
             ))
             # empty dict to fill
@@ -3368,6 +3375,25 @@ def union_nodes(lists):
                 # add to ans
                 ans.append(node)
     # RETURN
+    return ans
+
+# flattens arbitrary nested lists into one list
+def flatten_lists(orig):
+    # create blank answer list
+    ans = []
+    # for each element
+    for x in orig:
+        # if it's a list
+        if type(x) is list:
+            # flatten it and for each element
+            for y in flatten_lists(x):
+                # add to ans
+                ans.append(y)
+        # if not a list
+        else:
+            # add to ans
+            ans.append(x)
+    # fin
     return ans
 
 
