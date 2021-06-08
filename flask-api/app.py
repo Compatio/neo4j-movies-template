@@ -1213,7 +1213,7 @@ class DynamicConfigurator(Resource):
                     UNWIND cat.prods as prod
                     MATCH (q)-[c:COMPATIO]->(p:Product {uid:prod})--(s:Sku)--(y:Party{key:$merchant_key})
                     WITH DISTINCT cat,p,c,q,s
-                    WITH cat, {product:p.uid,variant_id:s.sku,parent_product_id:s.commerce_product_id,score:avg(c.score),edges:collect({rule:c.rule,score:c.score})} as prds
+                    WITH cat, {product:p.uid, model:p.model_number,variant_id:s.sku,parent_product_id:s.commerce_product_id,score:avg(c.score),edges:collect({prod:q.uid,rule:c.rule,score:c.score})} as prds
                     ORDER BY 1-prds.score
                     RETURN cat.cat as category, collect(prds)[..3200] as prods
                     ''', qdata
