@@ -1183,6 +1183,25 @@ class DynamicConfigurator(Resource):
                      } for cat in ans.keys()]
             }
             if context.get('merchant_key') is None:
+                # results = list(tx.run(
+                #     '''
+                #     UNWIND $data as cat
+                #     WITH cat
+                #     UNWIND cat.context as con
+                #     MATCH (q:Product{uid:con})
+                #     WITH cat,q
+                #     UNWIND cat.prods as prod
+                #     MATCH (q)-[c:COMPATIO]->(p:Product {uid:prod})
+                #     WITH DISTINCT cat,q,c,p
+                #     OPTIONAL MATCH (p)--(v:AttributeValue)-[va]-(a:Attribute{abs_enabled:True})
+                #     WHERE va.abs_show=True
+                #     WITH DISTINCT cat,p,c,q, {attr:a.name, values:collect(v.value)} as attr
+                #     WITH cat, {product:p.uid,score:avg(c.score),attrs:collect(distinct attr),edges:collect(distinct{rule:c.rule,score:c.score})} as prds
+                #     ORDER BY 1-prds.score
+                #     RETURN cat.cat as category, collect(prds)[..3200] as prods
+                #     ''', qdata
+                # ))
+
                 results = list(tx.run(
                     '''
                     UNWIND $data as cat
@@ -1193,10 +1212,7 @@ class DynamicConfigurator(Resource):
                     UNWIND cat.prods as prod
                     MATCH (q)-[c:COMPATIO]->(p:Product {uid:prod})
                     WITH DISTINCT cat,q,c,p
-                    OPTIONAL MATCH (p)--(v:AttributeValue)-[va]-(a:Attribute{abs_enabled:True})
-                    WHERE va.abs_show=True
-                    WITH DISTINCT cat,p,c,q, {attr:a.name, values:collect(v.value)} as attr
-                    WITH cat, {product:p.uid,score:avg(c.score),attrs:collect(distinct attr),edges:collect(distinct{rule:c.rule,score:c.score})} as prds
+                    WITH cat, {product:p.uid,score:avg(c.score),edges:collect(distinct{rule:c.rule,score:c.score})} as prds
                     ORDER BY 1-prds.score
                     RETURN cat.cat as category, collect(prds)[..3200] as prods
                     ''', qdata
